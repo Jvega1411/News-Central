@@ -3,3 +3,8 @@ data/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Claude Code: per-machine settings and Superpowers scratch (mockups, subagent briefs)
+.claude/settings.local.json
+.superpowers/
+.worktrees/
