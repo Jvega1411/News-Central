@@ -52,6 +52,10 @@ export function postSavedUpdate(id, fields) {
   return post('/api/saved/update', body);
 }
 
+export function fetchGeo(since) {
+  return getJSON('/api/geo?since=' + (since || 0));
+}
+
 export function fetchExportMd(onlyUndigested) {
   var url = '/api/export.md' + (onlyUndigested ? '?only=undigested' : '');
   return fetch(url, { cache: 'no-store' }).then(function (r) {

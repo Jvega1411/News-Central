@@ -5,6 +5,8 @@
 
 export var state = {
   region: 'All',
+  country: '',
+  scope: '',
   win: 24,
   kind: 'all',
   hideState: false,

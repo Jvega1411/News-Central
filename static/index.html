@@ -41,6 +41,7 @@ header { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bot
 .search { flex: 1; min-width: 220px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line);
   background: var(--panel); }
 main { padding-top: 6px; padding-bottom: 80px; }
+main.main-col { padding-top: 6px; padding-bottom: 80px; }
 .banner { display: none; margin: 8px 0; padding: 8px 12px; border-radius: 8px; background: var(--accent);
   color: #fff; cursor: pointer; text-align: center; font-size: 14px; font-weight: 600; }
 .item { display: grid; grid-template-columns: 58px 1fr 30px; gap: 10px; padding: 11px 0; border-bottom: 1px solid var(--line); }
@@ -78,6 +79,33 @@ td.detail { color: var(--muted); word-break: break-all; font-size: 12px; }
 .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); background: var(--on); color: var(--on-text);
   padding: 8px 14px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 10; }
 .toast.show { opacity: 1; }
+/* ---- spine layout ---- */
+.page-layout { display: grid; grid-template-columns: 220px 1fr; gap: 0; max-width: 1240px; margin: 0 auto; }
+#spine { width: 220px; min-width: 0; border-right: 1px solid var(--line); padding: 10px 0 80px; }
+.main-col { min-width: 0; padding: 6px 16px 80px; }
+/* spine components */
+.spine-loading { color: var(--muted); font-size: 13px; padding: 10px 12px; }
+.spine-section-head { color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; padding: 14px 12px 4px; }
+.spine-row { display: flex; align-items: center; gap: 2px; }
+.spine-country-row { padding-left: 24px; }
+.spine-btn { background: none; border: none; border-radius: 6px; padding: 3px 8px; font-size: 13px; cursor: pointer;
+  color: var(--text); display: flex; align-items: center; gap: 5px; white-space: nowrap;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; width: 100%; text-align: left; }
+.spine-btn:hover { background: var(--chip); }
+.spine-btn.on { background: var(--on); color: var(--on-text); }
+.spine-btn.on .spine-n { opacity: .8; }
+.spine-all { margin: 2px 8px 6px; width: calc(100% - 16px); }
+.spine-toggle { background: none; border: none; border-radius: 4px; padding: 3px 5px; font-size: 12px;
+  cursor: pointer; color: var(--muted); flex-shrink: 0; line-height: 1; }
+.spine-toggle:hover { background: var(--chip); }
+.spine-n { opacity: .5; font-size: 11px; font-variant-numeric: tabular-nums; margin-left: auto; flex-shrink: 0; }
+.spine-region { flex: 1; min-width: 0; }
+/* narrow screens: stack vertically, hide spine */
+@media (max-width: 700px) {
+  .page-layout { grid-template-columns: 1fr; }
+  #spine { display: none; }
+  .main-col { padding: 0 12px 80px; }
+}
 @media (max-width: 600px) {
   .item { grid-template-columns: 46px 1fr 26px; gap: 8px; }
   .title { font-size: 15px; }
@@ -116,12 +144,15 @@ td.detail { color: var(--muted); word-break: break-all; font-size: 12px; }
     </div>
   </div>
 </header>
-<main class="wrap">
-  <div class="banner" id="banner"></div>
-  <section id="feed"></section>
-  <section id="saved" hidden></section>
-  <section id="sources" hidden></section>
-</main>
+<div class="page-layout">
+  <nav id="spine" aria-label="Region and country navigation"></nav>
+  <main class="main-col">
+    <div class="banner" id="banner"></div>
+    <section id="feed"></section>
+    <section id="saved" hidden></section>
+    <section id="sources" hidden></section>
+  </main>
+</div>
 <div class="toast" id="toast"></div>
 
 <script type="module" src="js/main.js"></script>

@@ -1,6 +1,6 @@
 'use strict';
 import { fetchSources, fetchItems, fetchSaved, postRefresh, postSave, postUnsave, postSavedUpdate, fetchExportMd } from './api.js';
-import { setState } from './state.js';
+import { setState, onState } from './state.js';
 
 const REGION_ORDER = ['Spain', 'Europe & EU', 'Eurasia', 'Middle East & N. Africa', 'Africa', 'Latin America',
   'North America', 'South Asia', 'East Asia', 'Southeast Asia', 'Oceania', 'Global'];
@@ -21,15 +21,30 @@ const S = {
   items: new Map(), sources: {}, sourceList: [], saved: new Map(),
   region: pref.get('region', 'All'), win: pref.get('win', 24), kind: pref.get('kind', 'all'),
   hideState: pref.get('hideState', false), hideSports: pref.get('hideSports', true), showDigested: pref.get('showDigested', false),
-  q: '', src: '', shown: PAGE, cutoff: 0, maxSeen: 0, view: 'feed',
-  running: false, updated: 0, sourcesError: '', booting: true, applyAfterRun: false, timer: null
+  q: '', src: '', country: '', scope: '', shown: PAGE, cutoff: 0, maxSeen: 0, view: 'feed',
+  running: false, updated: 0, sourcesError: '', booting: true, applyAfterRun: false, timer: null,
+  _ignoreState: false
 };
 
 // Mirror initial prefs to shared state.
 setState({
-  region: S.region, win: S.win, kind: S.kind,
+  region: S.region, country: S.country, scope: S.scope,
+  win: S.win, kind: S.kind,
   hideState: S.hideState, hideSports: S.hideSports, showDigested: S.showDigested,
   view: S.view, q: S.q
+});
+
+// Subscribe to state changes driven by external modules (e.g. spine.js).
+// Guard: skip if the change originated from reader itself (_ignoreState flag).
+onState(function (st) {
+  if (S._ignoreState) return;
+  var changed = false;
+  if (st.region !== undefined && st.region !== S.region) { S.region = st.region; changed = true; }
+  if (st.country !== undefined && st.country !== S.country) { S.country = st.country; changed = true; }
+  if (st.scope !== undefined && st.scope !== S.scope) { S.scope = st.scope; changed = true; }
+  if (!changed) return;
+  S.shown = PAGE;
+  if (S.view === 'feed') { renderFeed(); window.scrollTo(0, 0); }
 });
 
 function esc(s) {
@@ -98,6 +113,11 @@ function regionsPresent() {
   return out;
 }
 
+function effectiveIso(src) {
+  // Returns the ISO or scope string that represents this source's geographic focus.
+  return (src.exile && src.covers) ? src.covers : (src.country_iso || src.scope || '');
+}
+
 function compute() {
   var minT = Date.now() / 1000 - S.win * 3600;
   var terms = norm(S.q).split(/\s+/).filter(Boolean);
@@ -113,6 +133,10 @@ function compute() {
     var ok = true;
     for (var i = 0; i < terms.length; i++) if (it._text.indexOf(terms[i]) === -1) { ok = false; break; }
     if (!ok) continue;
+    // country filter: match effective ISO against selected country
+    if (S.country && effectiveIso(src) !== S.country) continue;
+    // scope filter: match source scope against selected bucket
+    if (S.scope && (src.scope || '') !== S.scope) continue;
     var inRegion = S.region === 'All' || src.region === S.region;
     if (it.fs > S.cutoff) { if (inRegion) pending++; continue; }
     counts[src.region] = (counts[src.region] || 0) + 1;
@@ -352,7 +376,13 @@ function wireEvents() {
       return;
     }
     var chip = t.closest('[data-region]');
-    if (chip) { S.region = chip.dataset.region; setState({ region: S.region }); pref.set('region', S.region); S.shown = PAGE; renderFeed(); window.scrollTo(0, 0); return; }
+    if (chip) {
+      S.region = chip.dataset.region; S.country = ''; S.scope = '';
+      S._ignoreState = true;
+      setState({ region: S.region, country: '', scope: '' });
+      S._ignoreState = false;
+      pref.set('region', S.region); S.shown = PAGE; renderFeed(); window.scrollTo(0, 0); return;
+    }
     if (t.closest('[data-clearsrc]')) { S.src = ''; S.shown = PAGE; renderFeed(); return; }
     var src = t.closest('#feed [data-src]');
     if (src) { S.src = src.dataset.src; S.shown = PAGE; renderFeed(); window.scrollTo(0, 0); return; }

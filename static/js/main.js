@@ -1,5 +1,6 @@
 'use strict';
 import { initReader } from './reader.js';
+import { initSpine } from './spine.js';
 
 initReader(document);
-// map.js and spine.js are wired in later tasks.
+initSpine(document.getElementById('spine'));
