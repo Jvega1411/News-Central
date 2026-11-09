@@ -929,6 +929,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, f.read(), "text/html; charset=utf-8")
             elif path.startswith("/js/") and path.endswith(".js"):
                 self._serve_static(path, "text/javascript; charset=utf-8")
+            elif path == "/world.svg":
+                self._serve_static("/world.svg", "image/svg+xml")
             elif path == "/api/status":
                 self._json(status_payload())
             elif path == "/api/items":
