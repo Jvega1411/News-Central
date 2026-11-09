@@ -673,6 +673,7 @@ class Store:
 
 # ---------------------------------------------------------------- fetch loop
 
+
 def _country_label(s):
     countries = load_countries()
     iso = s.get("country_iso")
@@ -830,7 +831,7 @@ def aggregate_geo(sources, items, countries, since):
     floor = max(since, min_time)
     by_id = {s["id"]: s for s in sources}
     countries_out, buckets_out = {}, {}
-    seen_c, seen_b = {}, {}  # key -> set of source ids already counted
+    seen_country, seen_bucket = {}, {}  # key -> set of source ids already counted
 
     def bump(table, seen, key, sid, meta=None):
         if key not in table:
@@ -853,10 +854,10 @@ def aggregate_geo(sources, items, countries, since):
         iso = s.get("covers") if s.get("exile") else s.get("country_iso")
         if iso:
             meta = countries.get(iso, {})
-            bump(countries_out, seen_c, iso, s["id"],
+            bump(countries_out, seen_country, iso, s["id"],
                  {"name": meta.get("name", iso), "region": meta.get("region", "")})
         elif s.get("scope"):
-            bump(buckets_out, seen_b, s["scope"], s["id"])
+            bump(buckets_out, seen_bucket, s["scope"], s["id"])
     return {"countries": countries_out, "buckets": buckets_out}
 
 
