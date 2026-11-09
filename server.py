@@ -648,7 +648,7 @@ class Store:
                 "INSERT OR IGNORE INTO saved (id, source_id, source_name, region, country, lang, title, "
                 "link, summary, published, saved_at, country_iso) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (item["id"], item["source_id"], src.get("name", item["source_id"]), src.get("region", ""),
-                 src.get("country", ""), src.get("lang", ""), item["title"], item["link"],
+                 _country_label(src), src.get("lang", ""), item["title"], item["link"],
                  item["summary"], sort_time(item["published"], item["first_seen"]), time.time(),
                  src.get("country_iso") or ""))
             self.db.commit()
