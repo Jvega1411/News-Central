@@ -6,8 +6,8 @@
 import { fetchGeo } from './api.js';
 import { setState, onState, state } from './state.js';
 
-var RAMP = ['#2a2410', '#6b5312', '#b98a16', '#f0b429', '#ffd968'];
-var NO_DATA = '#10151b';
+var RAMP = ['#cfe1f2', '#93c0e0', '#5699cd', '#2b6cb0', '#13375e'];
+var NO_DATA = '#d9dee4';
 
 // --- colour helpers ---
 

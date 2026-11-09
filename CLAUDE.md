@@ -47,7 +47,7 @@ Reader at http://127.0.0.1:8787. Runtime data goes to `data/` (SQLite `news.db` 
 
 ## Visual rules
 
-- The map panel is always dark (an intentional data-viz surface), even in light mode. Tokens: background `#0b0e12`, no-data land `#10151b`, hairline borders `#222a33`, sequential count heat ramp `#2a2410 -> #6b5312 -> #b98a16 -> #f0b429 -> #ffd968`, active-country highlight cyan `#35d0d6`.
+- The map panel uses a light "clear" surface. Tokens: ocean/background `#eaf0f6`, no-data land `#d9dee4`, white country borders, sequential count ramp in blues `#cfe1f2 -> #93c0e0 -> #5699cd -> #2b6cb0 -> #13375e`, active-country highlight dark blue `#0a3d91`.
 - The rest of the app keeps the existing light/dark auto theme. Serif display (Georgia stack) for headings and the brand; system sans for article lists and controls; numbers are tabular (`font-variant-numeric: tabular-nums`).
 - Color always encodes meaning (counts, press-freedom, freshness), never decoration. One accent per surface, used sparingly. No gradients, glassmorphism, emoji in the chrome, or decorative blur.
 - The map is an Equal Earth projection SVG at `static/world.svg` (country `<path id>` = ISO alpha-2), generated from public-domain Natural Earth data by `tools/gen_world_svg.py`.
