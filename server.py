@@ -646,10 +646,11 @@ class Store:
         with self.lock:
             self.db.execute(
                 "INSERT OR IGNORE INTO saved (id, source_id, source_name, region, country, lang, title, "
-                "link, summary, published, saved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "link, summary, published, saved_at, country_iso) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (item["id"], item["source_id"], src.get("name", item["source_id"]), src.get("region", ""),
                  src.get("country", ""), src.get("lang", ""), item["title"], item["link"],
-                 item["summary"], sort_time(item["published"], item["first_seen"]), time.time()))
+                 item["summary"], sort_time(item["published"], item["first_seen"]), time.time(),
+                 src.get("country_iso") or ""))
             self.db.commit()
 
     def unsave(self, item_id):
@@ -672,6 +673,18 @@ class Store:
 
 # ---------------------------------------------------------------- fetch loop
 
+def _country_label(s):
+    countries = load_countries()
+    iso = s.get("country_iso")
+    if iso:
+        name = countries.get(iso, {}).get("name", iso)
+        if s.get("exile") and s.get("covers"):
+            cov = countries.get(s["covers"], {}).get("name", s["covers"])
+            return "%s (exile, covers %s)" % (name, cov)
+        return name
+    return s.get("scope") or ""
+
+
 def source_payload(sources, store):
     states = store.states()
     out = []
@@ -679,7 +692,10 @@ def source_payload(sources, store):
         st = states.get(s["id"], {})
         out.append({
             "id": s["id"], "name": s.get("name", s["id"]), "region": s.get("region", "Other"),
-            "country": s.get("country", ""), "lang": s.get("lang", ""), "kind": s.get("kind", "news"),
+            "country_iso": s.get("country_iso"), "scope": s.get("scope"),
+            "exile": bool(s.get("exile")), "covers": s.get("covers"),
+            "country": _country_label(s),
+            "lang": s.get("lang", ""), "kind": s.get("kind", "news"),
             "state_media": bool(s.get("state_media")), "paywall": bool(s.get("paywall")),
             "status": st.get("status") or "pending", "error": st.get("error") or "",
             "count": st.get("count") or 0, "last_ok": st.get("last_ok"), "last_try": st.get("last_try"),
@@ -809,6 +825,49 @@ def items_payload(since):
     return out
 
 
+def aggregate_geo(sources, items, countries, since):
+    min_time = time.time() - KEEP_HOURS * 3600
+    floor = max(since, min_time)
+    by_id = {s["id"]: s for s in sources}
+    countries_out, buckets_out = {}, {}
+    seen_c, seen_b = {}, {}  # key -> set of source ids already counted
+
+    def bump(table, seen, key, sid, meta=None):
+        if key not in table:
+            table[key] = {"items": 0, "sources": 0}
+            if meta:
+                table[key].update(meta)
+            seen[key] = set()
+        table[key]["items"] += 1
+        if sid not in seen[key]:
+            seen[key].add(sid)
+            table[key]["sources"] += 1
+
+    for r in items:
+        s = by_id.get(r["source_id"])
+        if not s:
+            continue
+        t = sort_time(r.get("published"), r["first_seen"])
+        if t < floor:
+            continue
+        iso = s.get("covers") if s.get("exile") else s.get("country_iso")
+        if iso:
+            meta = countries.get(iso, {})
+            bump(countries_out, seen_c, iso, s["id"],
+                 {"name": meta.get("name", iso), "region": meta.get("region", "")})
+        elif s.get("scope"):
+            bump(buckets_out, seen_b, s["scope"], s["id"])
+    return {"countries": countries_out, "buckets": buckets_out}
+
+
+def geo_payload(since):
+    cutoff = time.time() - KEEP_HOURS * 3600 - 3600
+    rows = STORE.items(max(since, cutoff))
+    out = aggregate_geo(FETCHER.sources, rows, load_countries(), since)
+    out["updated"] = FETCHER.last_cycle
+    return out
+
+
 def export_markdown(only_undigested):
     rows = STORE.saved()
     if only_undigested:
@@ -867,6 +926,12 @@ class Handler(BaseHTTPRequestHandler):
                 payload = status_payload()
                 payload["items"] = items_payload(since)
                 self._json(payload)
+            elif path == "/api/geo":
+                try:
+                    since = float((q.get("since") or ["0"])[0] or 0)
+                except ValueError:
+                    since = 0.0
+                self._json(geo_payload(since))
             elif path == "/api/sources":
                 payload = status_payload()
                 payload["sources"] = source_payload(FETCHER.sources, STORE)
