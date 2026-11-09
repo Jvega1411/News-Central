@@ -514,7 +514,7 @@ def migration(version):
 def run_migrations(db, lock):
     with lock:
         current = db.execute("PRAGMA user_version").fetchone()[0]
-        for version, fn in sorted(MIGRATIONS):
+        for version, fn in sorted(MIGRATIONS, key=lambda t: t[0]):
             if version > current:
                 fn(db)
                 db.execute("PRAGMA user_version = %d" % version)  # int only, never user input
