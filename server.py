@@ -499,6 +499,38 @@ def load_sources():
     return out
 
 
+# ---------------------------------------------------------------- migrations
+
+MIGRATIONS = []  # list of (version, fn(db)); applied in ascending order
+
+
+def migration(version):
+    def register(fn):
+        MIGRATIONS.append((version, fn))
+        return fn
+    return register
+
+
+def run_migrations(db, lock):
+    with lock:
+        current = db.execute("PRAGMA user_version").fetchone()[0]
+        for version, fn in sorted(MIGRATIONS):
+            if version > current:
+                fn(db)
+                db.execute("PRAGMA user_version = %d" % version)  # int only, never user input
+                db.commit()
+
+
+@migration(1)
+def _m1_saved_country_iso(db):
+    cols = [r[1] for r in db.execute("PRAGMA table_info(saved)")]
+    if "country_iso" not in cols:
+        db.execute("ALTER TABLE saved ADD COLUMN country_iso TEXT DEFAULT ''")
+
+
+SCHEMA_VERSION = max((v for v, _ in MIGRATIONS), default=0)
+
+
 # ---------------------------------------------------------------- storage
 
 class Store:
@@ -522,6 +554,7 @@ class Store:
                     last_try REAL, last_ok REAL, count INTEGER DEFAULT 0, etag TEXT, lastmod TEXT);
             """)
             self.db.commit()
+        run_migrations(self.db, self.lock)
 
     def add_items(self, source_id, items):
         now = time.time()
