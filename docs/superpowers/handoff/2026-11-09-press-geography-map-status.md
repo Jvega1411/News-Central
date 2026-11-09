@@ -42,11 +42,29 @@ request).
 | 6 | Split frontend into ES modules | DONE | 12e1c69 |
 | 7 | Region/Country spine sidebar | DONE | e121f11, 5644b1b, 7155238 |
 | 8 | World SVG asset (Equal Earth, Natural Earth) | DONE | ad07536 |
-| 9 | Dark choropleth map (hover, click-filter, legend, tray) | DONE | 96f6099 |
+| 9 | Choropleth map (hover, click-filter, legend, tray) | DONE | 96f6099 |
 | 10 | Editorial CSS (serif headings, tabular numbers) | DONE | fa208e9 |
 | 13 | Update CLAUDE.md | DONE | aa203c6 |
 | 11 | RSF 2026 press-freedom data | **NOT STARTED** (gated) | — |
 | 12 | Press-freedom map layer toggle | **NOT STARTED** (depends on 11, 9) | — |
+
+## Post-plan UI changes (user-requested, after the plan's 13 tasks)
+
+- **Map recolored to a light "clear" surface** (commit `ac3ef32`). The original design
+  was a dark panel with an amber heat ramp; the user asked for a light background
+  with blues. Current map tokens (also in CLAUDE.md "Visual rules"): ocean/panel
+  `#eaf0f6`, no-data land `#d9dee4`, white country borders, count ramp in blues
+  `#cfe1f2 -> #93c0e0 -> #5699cd -> #2b6cb0 -> #13375e`, active-country highlight
+  dark blue `#0a3d91`. If you touch map colors, keep this scheme, not the old dark/amber.
+  (Note: `map.js` line-2 comment still says "Dark Equal Earth" — stale, harmless.)
+- **Map is now a dedicated "Map" tab, not the default view** (commit `eac2908`).
+  Default view is the text Feed (spine on the left, no map), which is how the user
+  prefers to read. The view switcher is Feed / Map / Saved / Sources. The Map tab
+  shows the map on top + the feed below + the spine, with click-to-filter (the
+  pre-change behavior). Mechanism: `reader.js` uses `feedVisible = (view==='feed'
+  || view==='map')` so the feed renders in both; `map.js` has a `_ready` flag and
+  its `onState` subscriber shows `#map` only when `state.view === 'map'` (hidden
+  otherwise). Default `state.view` is `'feed'`, so the map starts hidden.
 
 Each done task passed a two-stage subagent review (spec compliance + code
 quality) where applicable. Backend is covered by `unittest`.
@@ -64,10 +82,12 @@ quality) where applicable. Backend is covered by `unittest`.
    press-freedom using a distinct factual ramp, attributed to RSF. See the plan
    for the suggested `paintPressFreedom` approach. `map.js` already stores the
    geo payload; add `geo.press_freedom` consumption.
-3. **Browser verification still pending** for map + spine + editorial CSS. The
-   user confirmed the spine renders and the ES-module refactor is clean, but the
-   map (Task 9) and CSS (Task 10) have NOT yet been visually confirmed in a
-   browser as of this handoff.
+3. **Browser verification done for the main UI.** The user has visually confirmed
+   in a browser: the ES-module refactor, the spine, the choropleth map (after the
+   light/blue recolor), and the Map tab. The press-freedom layer (11-12) is the
+   only UI piece not yet built/verified. Still re-check in a browser after any
+   further frontend change (reminder: `node --check` does not catch DOM runtime
+   errors).
 4. **Fix a stale doc line:** `CLAUDE.md` Architecture still lists `sources.json`
    field `country`. It is now `country_iso` (ISO alpha-2) or `country_iso: null`
    + `scope`, plus `exile`/`covers`. Update that bullet.
