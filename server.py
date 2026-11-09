@@ -851,6 +851,12 @@ class Handler(BaseHTTPRequestHandler):
 
 # ---------------------------------------------------------------- entry points
 
+class Server(ThreadingHTTPServer):
+    # On Windows SO_REUSEADDR lets a second copy bind the same port, so the
+    # "already running" check would never fire. Elsewhere it only skips TIME_WAIT.
+    allow_reuse_address = os.name != "nt"
+
+
 def lan_ip():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -898,7 +904,7 @@ def main():
     FETCHER = Fetcher(STORE)
     url = "http://127.0.0.1:%d" % args.port
     try:
-        httpd = ThreadingHTTPServer(("0.0.0.0" if args.lan else "127.0.0.1", args.port), Handler)
+        httpd = Server(("0.0.0.0" if args.lan else "127.0.0.1", args.port), Handler)
     except OSError:
         print("Port %d is busy; News Central is probably already running at %s" % (args.port, url))
         if args.open:
