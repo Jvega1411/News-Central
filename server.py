@@ -909,6 +909,16 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, obj, code=200):
         self._send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
 
+    def _serve_static(self, path, ctype):
+        safe = os.path.normpath(path.lstrip("/")).replace("\\", "/")
+        if safe.startswith("..") or ":" in safe:
+            return self._json({"error": "not found"}, 404)
+        full = os.path.join(BASE_DIR, "static", *safe.split("/"))
+        if not os.path.isfile(full):
+            return self._json({"error": "not found"}, 404)
+        with open(full, "rb") as f:
+            self._send(200, f.read(), ctype)
+
     def do_GET(self):
         url = urllib.parse.urlsplit(self.path)
         q = urllib.parse.parse_qs(url.query)
@@ -917,6 +927,8 @@ class Handler(BaseHTTPRequestHandler):
             if path in ("/", "/index.html"):
                 with open(INDEX_FILE, "rb") as f:
                     self._send(200, f.read(), "text/html; charset=utf-8")
+            elif path.startswith("/js/") and path.endswith(".js"):
+                self._serve_static(path, "text/javascript; charset=utf-8")
             elif path == "/api/status":
                 self._json(status_payload())
             elif path == "/api/items":
