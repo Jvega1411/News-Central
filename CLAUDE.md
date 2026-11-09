@@ -14,6 +14,14 @@ python server.py --lan       # also listen on the local network (phone on the sa
 
 Reader at http://127.0.0.1:8787. Runtime data goes to `data/` (SQLite `news.db` with archive, saved items and notes; `sources_status.json` written after every fetch cycle). `data/` is gitignored and must never be committed: the repository is public.
 
+## Code structure and guidelines
+
+- `server.py` is a single standard-library Python file. Split it into a package only if it grows past ~1,500 lines. Core stays Python 3.8+ standard library; a new dependency needs a reason, must be optional, and must ship ARM64 Linux wheels.
+- The frontend is vanilla ES modules under `static/js/` loaded from `static/index.html` via `<script type="module">`. No build step, no bundler, no dependency. Current modules: `state.js` (shared selection state + a tiny pub/sub: `state`, `setState`, `onState`), `api.js` (HTTP API wrappers), `reader.js` (feed, saved, sources views), `spine.js` (Region/Country navigation), `map.js` (choropleth), `main.js` (entry). Each module has one responsibility.
+- Do not use `??` or `?.` in frontend code (older Safari support).
+- Database schema changes go through the numbered migrations in `server.py` (`@migration(n)` + `run_migrations`, tracked by `PRAGMA user_version`).
+- Tests are stdlib `unittest` under `tests/`, run with `py -m unittest discover -s tests` (Windows) / `python -m unittest ...`. There is no pytest.
+
 ## Architecture
 
 - `server.py`: everything server-side, Python standard library only.
@@ -24,7 +32,7 @@ Reader at http://127.0.0.1:8787. Runtime data goes to `data/` (SQLite `news.db` 
   - Storage (`Store`): tables `items`, `saved`, `feed_state`. Items are pruned after 96 h (saved items are kept).
   - HTTP API: `GET /api/items?since=`, `/api/sources`, `/api/saved`, `/api/status`, `/api/export.md[?only=undigested][&download=1]`; `POST /api/refresh`, `/api/save`, `/api/unsave`, `/api/saved/update`. POSTs require the header `X-NewsCentral: 1`.
 - `sources.json`: one object per line, grouped by region. Fields: `id`, `name`, `region`, `country`, `lang`, `kind` (`news` or `analysis`), `feed` (string or list), `site`, optional `paywall`, `state_media`, `disabled` + `note`.
-- `static/index.html`: the whole UI in one file, vanilla JS (no build step, no `??` or `?.` for older Safari). Region chips, time window, news/analysis, sports & celebrity filter (URL-section based), state-controlled toggle, search, saved view with notes and "Copy for Claude", sources health table.
+- `static/index.html` plus vanilla ES modules in `static/js/` (`state`, `api`, `reader`, `spine`, `map`, `main`): no build step, still no `??` or `?.` for older Safari. Region chips, time window, news/analysis, sports & celebrity filter (URL-section based), state-controlled toggle, search, saved view with notes and "Copy for Claude", sources health table.
 - `NewsCentral.command`: macOS double-click launcher.
 
 ## Hard constraints
@@ -36,6 +44,13 @@ Reader at http://127.0.0.1:8787. Runtime data goes to `data/` (SQLite `news.db` 
 - Heavy processing (embeddings, clustering) runs as batch jobs that can run on any machine and store results in the database.
 - Times are stored as UTC epoch seconds and converted only in the UI.
 - Never invent outlet bias scores. Outlet metadata stays factual: ownership type, paywall, language, country.
+
+## Visual rules
+
+- The map panel is always dark (an intentional data-viz surface), even in light mode. Tokens: background `#0b0e12`, no-data land `#10151b`, hairline borders `#222a33`, sequential count heat ramp `#2a2410 -> #6b5312 -> #b98a16 -> #f0b429 -> #ffd968`, active-country highlight cyan `#35d0d6`.
+- The rest of the app keeps the existing light/dark auto theme. Serif display (Georgia stack) for headings and the brand; system sans for article lists and controls; numbers are tabular (`font-variant-numeric: tabular-nums`).
+- Color always encodes meaning (counts, press-freedom, freshness), never decoration. One accent per surface, used sparingly. No gradients, glassmorphism, emoji in the chrome, or decorative blur.
+- The map is an Equal Earth projection SVG at `static/world.svg` (country `<path id>` = ISO alpha-2), generated from public-domain Natural Earth data by `tools/gen_world_svg.py`.
 
 ## Testing
 
