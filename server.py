@@ -33,6 +33,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SOURCES_FILE = os.path.join(BASE_DIR, "sources.json")
+COUNTRIES_FILE = os.path.join(BASE_DIR, "geo", "countries.json")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_FILE = os.path.join(DATA_DIR, "news.db")
 STATUS_FILE = os.path.join(DATA_DIR, "sources_status.json")
@@ -482,6 +483,16 @@ def sort_time(published, first_seen):
     if published and published <= first_seen + 3600:
         return published
     return first_seen
+
+
+_COUNTRIES = None
+
+def load_countries():
+    global _COUNTRIES
+    if _COUNTRIES is None:
+        with open(COUNTRIES_FILE, encoding="utf-8") as f:
+            _COUNTRIES = json.load(f)
+    return _COUNTRIES
 
 
 def load_sources():
