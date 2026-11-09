@@ -150,6 +150,10 @@ function updateActive(st) {
 
 // --- init ---
 
+// _ready is set to true only after SVG + geo are fully loaded and painted.
+// The map element stays hidden until view === 'map' AND _ready is true.
+var _ready = false;
+
 export async function initMap(el) {
   if (!el) return;
 
@@ -184,8 +188,13 @@ export async function initMap(el) {
   paintMap(_svgRoot, geo);
   buildTray(el, geo.buckets || {});
 
-  // Remove hidden AFTER everything is ready
-  el.removeAttribute('hidden');
+  // Mark init complete, then apply current view to decide visibility.
+  // The element was born with [hidden] in the HTML; show it only if
+  // the current view is already 'map'.
+  _ready = true;
+  if (state.view === 'map') {
+    el.removeAttribute('hidden');
+  }
 
   // Tray click
   el.addEventListener('click', function (e) {
@@ -228,12 +237,20 @@ export async function initMap(el) {
     hideTip();
   });
 
-  // State subscriber: sync active highlight + tray chips
-  // NOTE: this subscriber only reads state and toggles classes; it never calls setState.
-  // No feedback loop is possible.
+  // State subscriber: sync active highlight, tray chips, and map visibility.
+  // NOTE: this subscriber only reads state and toggles classes/hidden; it never
+  // calls setState. No feedback loop is possible.
   onState(function (st) {
     updateActive(st);
     updateTray(st);
+    // Show the map only when the user is on the Map tab and init succeeded.
+    if (_ready) {
+      if (st.view === 'map') {
+        el.removeAttribute('hidden');
+      } else {
+        el.setAttribute('hidden', '');
+      }
+    }
   });
 
   // Apply current state immediately in case spine already set a country

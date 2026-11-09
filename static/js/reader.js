@@ -46,7 +46,7 @@ onState(function (st) {
   if (!changed) return;
   if (regionChanged) pref.set('region', S.region);
   S.shown = PAGE;
-  if (S.view === 'feed') { renderFeed(); window.scrollTo(0, 0); }
+  if (S.view === 'feed' || S.view === 'map') { renderFeed(); window.scrollTo(0, 0); }
 });
 
 function esc(s) {
@@ -201,7 +201,7 @@ function renderFeed(listToo) {
   $('#regions').innerHTML = chips;
 
   var b = $('#banner');
-  if (r.pending > 0 && S.view === 'feed') {
+  if (r.pending > 0 && (S.view === 'feed' || S.view === 'map')) {
     b.textContent = r.pending + ' new item' + (r.pending > 1 ? 's' : '') + ' · show';
     b.style.display = 'block';
   } else {
@@ -282,13 +282,20 @@ function renderSources() {
 function setView(v) {
   S.view = v;
   setState({ view: v });
-  ['feed', 'saved', 'sources'].forEach(function (x) {
-    $('#' + x).hidden = x !== v;
-    $('#v-' + x).classList.toggle('on', x === v);
+  // The feed section is visible in both 'feed' and 'map' views.
+  // map.js drives #map visibility via its own onState subscriber.
+  var feedVisible = (v === 'feed' || v === 'map');
+  $('#feed').hidden = !feedVisible;
+  $('#saved').hidden = v !== 'saved';
+  $('#sources').hidden = v !== 'sources';
+  // Toggle active class on all four tab buttons.
+  ['feed', 'map', 'saved', 'sources'].forEach(function (x) {
+    var btn = $('#v-' + x);
+    if (btn) btn.classList.toggle('on', x === v);
   });
-  $('#filters').hidden = v !== 'feed';
+  $('#filters').hidden = !feedVisible;
   $('#banner').style.display = 'none';
-  if (v === 'feed') renderFeed();
+  if (feedVisible) renderFeed();
   if (v === 'saved') loadSaved().then(renderSaved).catch(function () { toast('Server not reachable'); });
   if (v === 'sources') renderSources();
   window.scrollTo(0, 0);
@@ -309,7 +316,7 @@ async function tick() {
       if (!S.running) { S.booting = false; S.applyAfterRun = false; }
     }
     renderStatus();
-    if (S.view === 'feed') {
+    if (S.view === 'feed' || S.view === 'map') {
       if (applied) renderFeed();
       else if (added) renderFeed(false);
       updateTimes();
