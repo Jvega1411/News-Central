@@ -109,6 +109,18 @@ td.detail { color: var(--muted); word-break: break-all; font-size: 12px; }
   .item { grid-template-columns: 46px 1fr 26px; gap: 8px; }
   .title { font-size: 15px; }
 }
+/* ---- choropleth map ---- */
+.mapwrap { background:#0b0e12; border-radius:14px; padding:12px; margin:10px 0; }
+.mapwrap svg { width:100%; height:auto; display:block; }
+.mapwrap path { fill:#10151b; stroke:#222a33; stroke-width:.4; transition:fill .12s ease; }
+.mapwrap path.hit { cursor:pointer; }
+.mapwrap path.active { stroke:#35d0d6; stroke-width:1.4; }
+.map-legend { display:flex; align-items:center; gap:6px; margin-top:8px; font:12px ui-monospace,Menlo,Consolas,monospace; color:#8a93a0; }
+.map-legend i { width:18px; height:11px; display:inline-block; border-radius:2px; }
+.map-tip { position:fixed; pointer-events:none; background:#12161c; color:#e9edf2; border:1px solid #222a33; border-radius:6px; padding:5px 8px; font-size:12px; z-index:30; white-space:nowrap; }
+.map-tray { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+.map-tray .chip { background:#12161c; border:1px solid #222a33; color:#cfd6df; border-radius:999px; padding:3px 11px; font-size:13px; cursor:pointer; }
+.map-tray .chip.on { background:#35d0d6; color:#06252a; border-color:#35d0d6; }
 </style>
 </head>
 <body>
@@ -146,6 +158,7 @@ td.detail { color: var(--muted); word-break: break-all; font-size: 12px; }
 <div class="page-layout">
   <nav id="spine" aria-label="Region and country navigation"></nav>
   <main class="main-col">
+    <section id="map" class="mapwrap" hidden></section>
     <div class="banner" id="banner"></div>
     <section id="feed"></section>
     <section id="saved" hidden></section>
