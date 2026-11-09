@@ -95,7 +95,7 @@ function renderSpine() {
   var frag = document.createDocumentFragment();
 
   // --- Reset / All button ---
-  var allBtn = btn('All regions', { 'data-spine-region': 'All' });
+  var allBtn = btn('All regions', { spineRegion: 'All' });
   allBtn.className = 'spine-btn spine-all' + activeClass(currentRegion === 'All' && !currentCountry && !currentScope);
   frag.appendChild(allBtn);
 
