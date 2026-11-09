@@ -1,0 +1,5 @@
+# Local data: archive, saved items, notes, fetch status
+data/
+__pycache__/
+*.pyc
+.DS_Store
