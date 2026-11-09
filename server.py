@@ -510,6 +510,34 @@ def load_sources():
     return out
 
 
+SCOPE_VOCAB = ("Global", "Intergovernmental", "Transnational-regional")
+
+
+def validate_sources(sources, countries):
+    errors = []
+    for s in sources:
+        sid = s.get("id", "?")
+        if "country" in s:
+            errors.append("%s: legacy free-text 'country' field present" % sid)
+        iso = s.get("country_iso")
+        scope = s.get("scope")
+        if iso:
+            if iso not in countries:
+                errors.append("%s: country_iso %r not in country reference" % (sid, iso))
+        elif scope:
+            if scope not in SCOPE_VOCAB:
+                errors.append("%s: scope %r not in %r" % (sid, scope, SCOPE_VOCAB))
+        else:
+            errors.append("%s: needs either country_iso or scope" % sid)
+        if s.get("exile"):
+            cov = s.get("covers")
+            if not cov:
+                errors.append("%s: exile source missing 'covers'" % sid)
+            elif cov not in countries:
+                errors.append("%s: covers %r not in country reference" % (sid, cov))
+    return errors
+
+
 # ---------------------------------------------------------------- migrations
 
 MIGRATIONS = []  # list of (version, fn(db)); applied in ascending order
@@ -940,9 +968,16 @@ def main():
     ap.add_argument("--lan", action="store_true", help="also serve to other devices on this Wi-Fi")
     ap.add_argument("--open", action="store_true", help="open the reader in the browser after starting")
     ap.add_argument("--check", action="store_true", help="test every source once, print a report and exit")
+    ap.add_argument("--check-sources", action="store_true", help="validate source data model and exit")
     args = ap.parse_args()
     if args.check:
         return run_check()
+    if args.check_sources:
+        errs = validate_sources(load_sources(), load_countries())
+        for e in errs:
+            print("FAIL", e)
+        print("%d problem(s)" % len(errs))
+        return 1 if errs else 0
 
     STORE = Store(DB_FILE)
     FETCHER = Fetcher(STORE)
