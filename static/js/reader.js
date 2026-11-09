@@ -39,10 +39,12 @@ setState({
 onState(function (st) {
   if (S._ignoreState) return;
   var changed = false;
-  if (st.region !== undefined && st.region !== S.region) { S.region = st.region; changed = true; }
+  var regionChanged = false;
+  if (st.region !== undefined && st.region !== S.region) { S.region = st.region; regionChanged = true; changed = true; }
   if (st.country !== undefined && st.country !== S.country) { S.country = st.country; changed = true; }
   if (st.scope !== undefined && st.scope !== S.scope) { S.scope = st.scope; changed = true; }
   if (!changed) return;
+  if (regionChanged) pref.set('region', S.region);
   S.shown = PAGE;
   if (S.view === 'feed') { renderFeed(); window.scrollTo(0, 0); }
 });
