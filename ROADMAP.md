@@ -10,7 +10,12 @@ Goal: the best news tool for this specific use (global coverage for CMUDE prep, 
 - [ ] Keep the full archive (drop the 96 h prune for items) and add full-text search over history (SQLite FTS5; check it exists in each machine's Python)
 - [x] Map of where the press is from: choropleth of item counts by source country, click to filter. Needs ISO country codes in `sources.json` and rules for "Global", "UN", "Pan-African", exile outlets
 - [x] Press-freedom layer on the map (RSF World Press Freedom Index 2026)
-- [ ] Topics without new downloads: section names in links plus multilingual keyword rules, mapped to BP motion areas (economy, governance, international relations and security, law and rights, environment and energy, technology, health, education, religion and culture, gender and society, migration, media)
+- [ ] Topic filter (moved to spec 2, enrichment). Decided 2026-11-11:
+  - Closed taxonomy: BP motion areas (economy, governance and politics, international relations and security, law and rights, environment and energy, technology, health, education, religion and culture, gender and society, migration, media), plus sports and celebrity only so they can be hidden.
+  - Multi-label: up to 2 or 3 topics per item.
+  - Signals in order of trust: source kind and topical feeds, URL section, the feed's own category tags (stored per item since 2026-11-11), then an embedding classifier. Keyword rules only as a last resort (false positives: Chad, Jordan, Georgia).
+  - Every label records its method and confidence; "unclassified" is a valid answer; labels live in their own table so they can be recomputed.
+  - Precision is measured on about 300 items the user labels by hand in a labelling view in the app, before any method is trusted.
 - [ ] Refresh interval per source (wires 5 min, think tanks 6 h)
 
 ## Phase 2: Study loop
