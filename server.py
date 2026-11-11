@@ -34,6 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SOURCES_FILE = os.path.join(BASE_DIR, "sources.json")
 COUNTRIES_FILE = os.path.join(BASE_DIR, "geo", "countries.json")
+PRESS_FREEDOM_FILE = os.path.join(BASE_DIR, "geo", "press-freedom-2026.json")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_FILE = os.path.join(DATA_DIR, "news.db")
 STATUS_FILE = os.path.join(DATA_DIR, "sources_status.json")
@@ -495,6 +496,19 @@ def load_countries():
     return _COUNTRIES
 
 
+_PRESS_FREEDOM = None
+
+def load_press_freedom():
+    global _PRESS_FREEDOM
+    if _PRESS_FREEDOM is None:
+        try:
+            with open(PRESS_FREEDOM_FILE, encoding="utf-8") as f:
+                _PRESS_FREEDOM = json.load(f)
+        except (OSError, ValueError):
+            _PRESS_FREEDOM = {}
+    return _PRESS_FREEDOM
+
+
 def load_sources():
     with open(SOURCES_FILE, encoding="utf-8") as f:
         data = json.load(f)
@@ -866,6 +880,7 @@ def geo_payload(since):
     rows = STORE.items(max(since, cutoff))
     out = aggregate_geo(FETCHER.sources, rows, load_countries(), since)
     out["updated"] = FETCHER.last_cycle
+    out["press_freedom"] = load_press_freedom()
     return out
 
 
