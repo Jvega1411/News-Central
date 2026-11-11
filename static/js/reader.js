@@ -27,6 +27,7 @@ const S = {
   running: false, updated: 0, sourcesError: '', booting: true, applyAfterRun: false, timer: null,
   archFrom: '', archTo: '',
   readLangs: ['es', 'en'], showLangs: pref.get('showLangs', false), truncated: false,
+  worker: [], workerEnabled: true,
   archive: { key: null, items: [], total: 0, loading: false, error: '' },
   _ignoreState: false
 };
@@ -84,6 +85,8 @@ async function loadSources() {
   S.sourceList = d.sources;
   S.running = d.running; S.updated = d.updated; S.sourcesError = d.sources_error;
   if (d.read_langs && d.read_langs.length) S.readLangs = d.read_langs;
+  S.worker = d.worker || [];
+  S.workerEnabled = d.worker_enabled !== false;
 }
 
 function mergeItems(d) {
@@ -411,6 +414,28 @@ function duration(seconds) {
   return h < 48 ? h + ' h ' + (m % 60) + ' min' : Math.round(h / 24) + ' days';
 }
 
+function agoText(ts) { var a = ago(ts); return a === 'now' ? 'just now' : a + ' ago'; }
+
+// Worker states map to the existing status colours: working (ok), not working (pending), broken (error).
+var WORKER_CLASS = { running: 'st-ok', idle: 'st-ok', unavailable: 'st-pending', stopped: 'st-pending', error: 'st-error' };
+
+function workerHTML() {
+  if (!S.workerEnabled) {
+    return '<div class="toolbar">Background worker: off (--no-worker or "worker": false in config.json)</div>';
+  }
+  if (!S.worker.length) return '<div class="toolbar">Background worker: no report yet</div>';
+  return S.worker.map(function (w) {
+    var parts = ['Worker job ' + esc(w.job) + ': <span class="' + (WORKER_CLASS[w.state] || 'st-pending') + '">' +
+                 esc(w.state) + '</span>'];
+    if (w.last_batch) parts.push('last batch ' + agoText(w.last_batch));
+    parts.push((w.done_last_hour || 0).toLocaleString() + ' done in the last hour');
+    if (w.updated) parts.push('reported ' + agoText(w.updated));
+    var h = '<div class="toolbar">' + parts.join(' · ') + '</div>';
+    if (w.last_error) h += '<div class="toolbar detail">' + esc(w.last_error) + '</div>';
+    return h;
+  }).join('');
+}
+
 function collectionHTML() {
   var st = S.stats;
   if (!st) return '';
@@ -429,6 +454,7 @@ function collectionHTML() {
   var h = '<h2>Collection</h2><div class="toolbar">Uptime last 7 days: ' + esc(pct(st.uptime_7d)) +
     ' · last 30 days: ' + esc(pct(st.uptime_30d)) + ' · ' + st.gaps.length + ' gap' + (st.gaps.length === 1 ? '' : 's') +
     (st.longest_gap ? ' · longest ' + esc(duration(st.longest_gap)) : '') + '</div>';
+  h += workerHTML();
   h += '<table class="volume"><thead><tr><th>Day (UTC)</th><th>Read (' + esc(read.join(', ')) +
     ')</th><th>Other languages</th><th>Characters to translate</th><th>Breakdown</th></tr></thead><tbody>';
   h += order.slice(0, 14).map(function (day) {

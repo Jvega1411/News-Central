@@ -28,7 +28,8 @@ class App:
 def status_payload(app):
     f = app.fetcher
     return {"running": f.running, "updated": f.last_cycle, "sources_error": f.sources_error,
-            "read_langs": app.config["read_langs"]}
+            "read_langs": app.config["read_langs"], "worker_enabled": bool(app.config["worker"]),
+            "worker": app.store.worker_status()}
 
 
 def stats_payload(app, days, now=None):
