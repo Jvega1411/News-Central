@@ -168,12 +168,14 @@ h1, h2, h3, .brand, .spine-section-head {
         <input class="btn" id="arch-from" type="date" title="From this day" aria-label="From date" hidden>
         <input class="btn" id="arch-to" type="date" title="Up to this day" aria-label="To date" hidden>
         <select class="btn" id="kind">
-          <option value="all">News + analysis</option>
+          <option value="all">All kinds</option>
           <option value="news">News only</option>
           <option value="analysis">Analysis only</option>
+          <option value="official">Official only</option>
         </select>
         <label class="btn"><input type="checkbox" id="hidesports"> Hide sports &amp; celebrity</label>
         <label class="btn"><input type="checkbox" id="hidestate"> Hide state-controlled</label>
+        <label class="btn" title="Languages outside read_langs in config.json"><input type="checkbox" id="showlangs"> Show other languages <span id="showlangs-n"></span></label>
       </div>
     </div>
   </div>

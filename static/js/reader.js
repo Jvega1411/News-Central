@@ -25,6 +25,7 @@ const S = {
   q: '', src: '', country: '', scope: '', shown: PAGE, cutoff: 0, maxSeen: 0, view: 'feed',
   running: false, updated: 0, sourcesError: '', booting: true, applyAfterRun: false, timer: null,
   archFrom: '', archTo: '',
+  readLangs: ['es', 'en'], showLangs: pref.get('showLangs', false), truncated: false,
   archive: { key: null, items: [], total: 0, loading: false, error: '' },
   _ignoreState: false
 };
@@ -81,6 +82,7 @@ async function loadSources() {
   d.sources.forEach(function (s) { S.sources[s.id] = s; });
   S.sourceList = d.sources;
   S.running = d.running; S.updated = d.updated; S.sourcesError = d.sources_error;
+  if (d.read_langs && d.read_langs.length) S.readLangs = d.read_langs;
 }
 
 async function loadItems() {
@@ -97,6 +99,7 @@ async function loadItems() {
     added++;
   }
   S.running = d.running; S.updated = d.updated;
+  S.truncated = !!d.truncated;
   var minT = Date.now() / 1000 - 96 * 3600;
   for (var entry of S.items) {
     var id = entry[0], item = entry[1];
@@ -128,7 +131,7 @@ function compute() {
   var minT = Date.now() / 1000 - S.win * 3600;
   var terms = norm(S.q).split(/\s+/).filter(Boolean);
   var shown = [], counts = {};
-  var total = 0, pending = 0;
+  var total = 0, pending = 0, hidden = 0;
   for (var it of S.items.values()) {
     var src = S.sources[it.s];
     if (!src || it.t < minT) continue;
@@ -146,13 +149,19 @@ function compute() {
     // A country or scope selection already passed its own filter above; the source's
     // editorial region (e.g. BBC World is "Global") must not exclude it again.
     var inRegion = !!S.country || !!S.scope || S.region === 'All' || src.region === S.region;
+    // Languages the user does not read stay out of the feed (and out of its counts) unless asked for.
+    // An item's own language wins over its source's.
+    if (!S.showLangs && S.readLangs.indexOf(it.lang || src.lang) === -1) {
+      if (inRegion && it.fs <= S.cutoff) hidden++;
+      continue;
+    }
     if (it.fs > S.cutoff) { if (inRegion) pending++; continue; }
     counts[src.region] = (counts[src.region] || 0) + 1;
     total++;
     if (inRegion) shown.push(it);
   }
   shown.sort(function (a, b) { return b.t - a.t; });
-  return { shown: shown, counts: counts, total: total, pending: pending };
+  return { shown: shown, counts: counts, total: total, pending: pending, hidden: hidden };
 }
 
 /* ------------------------------------------------------------ rendering */
@@ -164,6 +173,7 @@ function renderStatus() {
   var txt = ok + '/' + L.length + ' sources';
   if (S.updated) { var a = ago(S.updated); txt += ' · updated ' + (a === 'now' ? 'just now' : a + ' ago'); }
   if (S.running) txt += ' · fetching…';
+  if (S.truncated) txt += ' · too many items in the window, showing the newest';
   $('#status').textContent = txt;
 }
 
@@ -176,6 +186,7 @@ function itemHTML(it, now, src) {
   var tags = [];
   if (src.lang && src.lang !== 'en') tags.push('<span class="tag">' + esc(src.lang) + '</span>');
   if (src.kind === 'analysis') tags.push('<span class="tag an">analysis</span>');
+  if (src.kind === 'official') tags.push('<span class="tag an">official</span>');
   if (src.state_media) tags.push('<span class="tag state">state-controlled</span>');
   if (src.paywall) tags.push('<span class="tag">paywall</span>');
   if (src.lang && src.lang !== 'en' && src.lang !== 'es') {
@@ -187,8 +198,8 @@ function itemHTML(it, now, src) {
     '<div class="time">' + esc(top) + '<span class="ago">' + ago(it.t) + '</span></div>' +
     '<div><div class="meta"><span class="src" data-src="' + esc(it.s) + '" title="Show only this outlet">' + esc(src.name) +
     '</span><span>' + esc(src.country || '') + '</span>' + tags.join('') + '</div>' +
-    '<a class="title" href="' + safeHref(it.link) + '" target="_blank" rel="noopener">' + esc(it.title) + '</a>' +
-    (it.summary ? '<div class="sum">' + esc(it.summary) + '</div>' : '') + '</div>' +
+    '<a class="title" dir="auto" href="' + safeHref(it.link) + '" target="_blank" rel="noopener">' + esc(it.title) + '</a>' +
+    (it.summary ? '<div class="sum" dir="auto">' + esc(it.summary) + '</div>' : '') + '</div>' +
     '<button class="star' + (saved ? ' on' : '') + '" data-star="' + esc(it.id) + '" title="Save for later">' +
     (saved ? '★' : '☆') + '</button></article>';
 }
@@ -254,6 +265,7 @@ function renderArchive() {
   }).join('');
   $('#regions').innerHTML = chips;
   $('#banner').style.display = 'none';
+  $('#showlangs-n').textContent = '';
   document.title = 'News Central';
 
   var el = $('#feed');
@@ -289,6 +301,7 @@ function renderFeed(listToo) {
     return;
   }
   var r = compute();
+  $('#showlangs-n').textContent = r.hidden ? '(' + r.hidden + ')' : '';
   var regs = ['All'].concat(regionsPresent());
   var chips = '';
   if (S.src && S.sources[S.src]) {
@@ -349,8 +362,8 @@ function renderSaved() {
     return '<div class="saved-item' + (x.digested ? ' done' : '') + '">' +
       '<div class="meta"><span class="src">' + esc(x.source_name) + '</span><span>' + esc(x.country || '') + '</span><span>' +
       esc(x.region || '') + '</span><span>' + (x.published ? esc(new Date(x.published * 1000).toLocaleString()) : '') + '</span></div>' +
-      '<a class="title" href="' + safeHref(x.link) + '" target="_blank" rel="noopener">' + esc(x.title) + '</a>' +
-      (x.summary ? '<div class="sum open">' + esc(x.summary) + '</div>' : '') +
+      '<a class="title" dir="auto" href="' + safeHref(x.link) + '" target="_blank" rel="noopener">' + esc(x.title) + '</a>' +
+      (x.summary ? '<div class="sum open" dir="auto">' + esc(x.summary) + '</div>' : '') +
       '<textarea placeholder="Your note: why it matters, which motion or argument it feeds…" data-note="' + esc(x.id) + '">' +
       esc(x.note || '') + '</textarea>' +
       '<div class="toolbar"><label class="btn"><input type="checkbox" data-dig="' + esc(x.id) + '"' + (x.digested ? ' checked' : '') +
@@ -564,6 +577,7 @@ function wireEvents() {
     else if (t.id === 'arch-to') { S.archTo = t.value; renderFeed(); }
     else if (t.id === 'kind') { S.kind = t.value; setState({ kind: S.kind }); pref.set('kind', S.kind); S.shown = PAGE; renderFeed(); }
     else if (t.id === 'hidesports') { S.hideSports = t.checked; setState({ hideSports: S.hideSports }); pref.set('hideSports', S.hideSports); S.shown = PAGE; renderFeed(); }
+    else if (t.id === 'showlangs') { S.showLangs = t.checked; pref.set('showLangs', S.showLangs); S.shown = PAGE; renderFeed(); }
     else if (t.id === 'hidestate') { S.hideState = t.checked; setState({ hideState: S.hideState }); pref.set('hideState', S.hideState); S.shown = PAGE; renderFeed(); }
     else if (t.id === 'show-dig') { S.showDigested = t.checked; setState({ showDigested: S.showDigested }); pref.set('showDigested', S.showDigested); renderSaved(); }
     else if (t.dataset && t.dataset.dig) {
@@ -617,6 +631,7 @@ export function initReader() {
   $('#kind').value = S.kind;
   $('#hidestate').checked = S.hideState;
   $('#hidesports').checked = S.hideSports;
+  $('#showlangs').checked = S.showLangs;
   wireEvents();
   loadSaved().catch(function () {}).then(tick);
 }
