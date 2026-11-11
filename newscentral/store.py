@@ -87,6 +87,25 @@ def _m5_item_feed_tags(db):
     db.execute("ALTER TABLE items ADD COLUMN feed_tags TEXT")
 
 
+@migration(6)
+def _m6_translations(db):
+    db.execute("""CREATE TABLE translations (
+        item_id TEXT NOT NULL, field TEXT NOT NULL CHECK (field IN ('title', 'summary')),
+        lang TEXT NOT NULL, text TEXT NOT NULL, engine TEXT NOT NULL, created REAL NOT NULL,
+        PRIMARY KEY (item_id, field, lang))""")
+    db.execute("CREATE INDEX translations_created ON translations(created)")
+    db.execute("CREATE INDEX translations_engine ON translations(engine)")
+    db.execute("""CREATE TABLE translation_failures (
+        item_id TEXT NOT NULL, field TEXT NOT NULL, lang TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, last_try REAL,
+        PRIMARY KEY (item_id, field, lang))""")
+    db.execute("""CREATE TABLE worker_status (
+        job TEXT PRIMARY KEY, state TEXT, last_batch REAL, done_last_hour INTEGER DEFAULT 0,
+        last_error TEXT, updated REAL)""")
+    # The translation queue scans items of the languages the user does not read, newest first.
+    db.execute("CREATE INDEX items_lang_seen ON items(lang, first_seen)")
+
+
 def schema_version():
     return max((v for v, _ in MIGRATIONS), default=0)
 
@@ -126,13 +145,35 @@ def search_terms(q):
 
 # ---------------------------------------------------------------- storage
 
+BUSY_TIMEOUT_MS = 5000
+
+
+class SchemaMismatch(Exception):
+    """The database was migrated by a different version of the code than the one opening it."""
+
+
 class Store:
-    def __init__(self, path, fts=True):
+    def __init__(self, path, fts=True, migrate=True):
+        """migrate=False opens a database that the server owns (the worker and the tools do this):
+        no table is created, no migration runs, and the schema version must match this code."""
+        if not migrate and not os.path.isfile(path):
+            raise FileNotFoundError("database %s does not exist yet; start the server first" % path)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         self.lock = threading.Lock()
         self.fts = False
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        self.journal_mode = None
+        self.db = sqlite3.connect(path, timeout=BUSY_TIMEOUT_MS / 1000.0, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
+        self.db.execute("PRAGMA busy_timeout = %d" % BUSY_TIMEOUT_MS)
+        if not migrate:
+            try:
+                self._check_version(fts)
+            except Exception:
+                self.db.close()
+                raise
+            return
+        # WAL lets the worker process write while the server reads. The mode is stored in the file.
+        self.journal_mode = self.db.execute("PRAGMA journal_mode=WAL").fetchone()[0]
         with self.lock:
             self.db.executescript("""
                 CREATE TABLE IF NOT EXISTS items (
@@ -154,6 +195,15 @@ class Store:
         except Exception:
             self.db.close()
             raise
+
+    def _check_version(self, fts):
+        found = self.db.execute("PRAGMA user_version").fetchone()[0]
+        expected = schema_version()
+        if found != expected:
+            raise SchemaMismatch("database schema version is %d but this code expects %d; restart the "
+                                 "server so that the server and the worker run the same code" % (found, expected))
+        names = {r[0] for r in self.db.execute("SELECT name FROM sqlite_master")}
+        self.fts = bool(fts) and "items_fts" in names
 
     def ensure_fts(self, wanted=True):
         """The search index is derived data that depends on the SQLite build, not on the schema
@@ -347,3 +397,16 @@ class Store:
     def saved(self):
         with self.lock:
             return [dict(r) for r in self.db.execute("SELECT * FROM saved ORDER BY saved_at DESC")]
+
+    def set_worker_status(self, job, state, last_batch=None, done_last_hour=0, last_error="", now=None):
+        now = time.time() if now is None else now
+        with self.lock:
+            self.db.execute(
+                "INSERT OR REPLACE INTO worker_status (job, state, last_batch, done_last_hour, last_error, updated) "
+                "VALUES (?,?,?,?,?,?)", (job, state, last_batch, int(done_last_hour or 0),
+                                         str(last_error or "")[:500], now))
+            self.db.commit()
+
+    def worker_status(self):
+        with self.lock:
+            return [dict(r) for r in self.db.execute("SELECT * FROM worker_status ORDER BY job")]

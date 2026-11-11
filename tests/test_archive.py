@@ -111,7 +111,7 @@ class TestUpgradeFromV1(StoreCase):
         self.assertEqual(s.db.execute("SELECT COUNT(*) FROM items").fetchone()[0], 1)
         self.assertIn("lang", [r[1] for r in s.db.execute("PRAGMA table_info(items)")])
         self.assertIn("feed_tags", [r[1] for r in s.db.execute("PRAGMA table_info(items)")])
-        self.assertEqual(store_mod.schema_version(), 5)
+        self.assertEqual(store_mod.schema_version(), 6)
 
     def test_failed_migration_rolls_back(self):
         self.open().db.close()
@@ -164,8 +164,8 @@ class TestFeedTags(StoreCase):
         self.assertIsNone(rows["B"])
         self.assertIsNone(rows["C"])
 
-    def test_schema_version_is_5(self):
-        self.assertEqual(store_mod.schema_version(), 5)
+    def test_schema_version_is_6(self):
+        self.assertEqual(store_mod.schema_version(), 6)
 
 
 class TestTruncatedFlag(ApiCase):
