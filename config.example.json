@@ -1,0 +1,9 @@
+{
+  "port": 8787,
+  "listen": "127.0.0.1",
+  "data_dir": "data",
+  "read_langs": ["es", "en"],
+  "refresh_minutes": 15,
+  "keep_awake": false,
+  "log_file": null
+}

@@ -8,3 +8,6 @@ __pycache__/
 .claude/settings.local.json
 .superpowers/
 .worktrees/
+
+# Per-machine configuration
+config.json

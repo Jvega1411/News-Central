@@ -5,7 +5,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .config import SOURCES_FILE, STATUS_FILE, REFRESH_SECONDS, ERROR_RETRY_SECONDS, WORKERS, KEEP_HOURS
+from .config import SOURCES_FILE, REFRESH_SECONDS, ERROR_RETRY_SECONDS, WORKERS, KEEP_HOURS
 from .feeds import configured_feeds, fetch_source
 from .http_client import short_error
 from .sources import load_sources, country_label
@@ -31,9 +31,11 @@ def source_payload(sources, store):
 
 
 class Fetcher(threading.Thread):
-    def __init__(self, store):
+    def __init__(self, store, refresh_seconds=REFRESH_SECONDS, status_file=None):
         super().__init__(daemon=True)
         self.store = store
+        self.refresh_seconds = refresh_seconds
+        self.status_file = status_file
         self.wake = threading.Event()
         self.force_next = True   # first cycle after start retries everything, failing sources included
         self.running = False
@@ -74,7 +76,7 @@ class Fetcher(threading.Thread):
                 self.cycle(force)
             except Exception as e:
                 print("fetch cycle failed:", e, file=sys.stderr, flush=True)
-            deadline = time.time() + REFRESH_SECONDS
+            deadline = time.time() + self.refresh_seconds
             mtime = self.sources_mtime()
             while time.time() < deadline:
                 if self.wake.wait(5):
@@ -115,11 +117,13 @@ class Fetcher(threading.Thread):
             self.running = False
 
     def write_status(self):
+        if not self.status_file:
+            return
         try:
             payload = {"updated": self.last_cycle, "sources": source_payload(self.sources, self.store)}
-            tmp = STATUS_FILE + ".tmp"
+            tmp = self.status_file + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=1)
-            os.replace(tmp, STATUS_FILE)
+            os.replace(tmp, self.status_file)
         except Exception:
             pass

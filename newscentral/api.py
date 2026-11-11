@@ -4,7 +4,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .config import INDEX_FILE, KEEP_HOURS, STATIC_DIR
+from .config import DEFAULTS, INDEX_FILE, KEEP_HOURS, STATIC_DIR
 from .fetcher import source_payload
 from .sources import load_countries, load_press_freedom
 from .store import sort_time
@@ -16,12 +16,13 @@ class App:
     def __init__(self, store, fetcher, config=None):
         self.store = store
         self.fetcher = fetcher
-        self.config = config or {}
+        self.config = dict(DEFAULTS, **(config or {}))
 
 
 def status_payload(app):
     f = app.fetcher
-    return {"running": f.running, "updated": f.last_cycle, "sources_error": f.sources_error}
+    return {"running": f.running, "updated": f.last_cycle, "sources_error": f.sources_error,
+            "read_langs": app.config["read_langs"]}
 
 
 def items_payload(app, since):

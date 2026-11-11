@@ -5,7 +5,7 @@ import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 
 from .api import App, Handler, Server
-from .config import DB_FILE, WORKERS
+from .config import CONFIG_FILE, ConfigError, WORKERS, load_config, paths
 from .feeds import fetch_source
 from .fetcher import Fetcher
 from .sources import load_countries, load_sources, validate_sources
@@ -46,8 +46,9 @@ def run_check():
 
 def main():
     ap = argparse.ArgumentParser(description="News Central: local world-news reader")
-    ap.add_argument("--port", type=int, default=8787)
+    ap.add_argument("--port", type=int, default=None)
     ap.add_argument("--lan", action="store_true", help="also serve to other devices on this Wi-Fi")
+    ap.add_argument("--config", default=CONFIG_FILE, help="path to config.json")
     ap.add_argument("--open", action="store_true", help="open the reader in the browser after starting")
     ap.add_argument("--check", action="store_true", help="test every source once, print a report and exit")
     ap.add_argument("--check-sources", action="store_true", help="validate source data model and exit")
@@ -61,23 +62,30 @@ def main():
         print("%d problem(s)" % len(errs))
         return 1 if errs else 0
 
-    store = Store(DB_FILE)
-    fetcher = Fetcher(store)
-    url = "http://127.0.0.1:%d" % args.port
     try:
-        httpd = Server(("0.0.0.0" if args.lan else "127.0.0.1", args.port), Handler)
+        cfg = load_config(args.config, {"port": args.port, "listen": "0.0.0.0" if args.lan else None})
+    except ConfigError as e:
+        print(e)
+        return 2
+    p = paths(cfg)
+    lan = cfg["listen"] != "127.0.0.1"
+    store = Store(p["db"])
+    fetcher = Fetcher(store, cfg["refresh_minutes"] * 60, p["status"])
+    url = "http://127.0.0.1:%d" % cfg["port"]
+    try:
+        httpd = Server((cfg["listen"], cfg["port"]), Handler)
     except OSError:
-        print("Port %d is busy; News Central is probably already running at %s" % (args.port, url))
+        print("Port %d is busy; News Central is probably already running at %s" % (cfg["port"], url))
         if args.open:
             webbrowser.open(url)
         return 1
-    httpd.app = App(store, fetcher)
+    httpd.app = App(store, fetcher, cfg)
     fetcher.start()
     print("News Central is running at", url)
-    if args.lan:
+    if lan:
         ip = lan_ip()
         if ip:
-            print("From your phone on the same Wi-Fi: http://%s:%d" % (ip, args.port))
+            print("From your phone on the same Wi-Fi: http://%s:%d" % (ip, cfg["port"]))
     print("Keep this window open while you read. Close it (or press Ctrl+C) to stop.", flush=True)
     if args.open:
         threading.Timer(1.0, webbrowser.open, args=(url,)).start()

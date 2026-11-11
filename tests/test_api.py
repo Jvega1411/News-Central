@@ -9,6 +9,9 @@ class TestApi(ApiCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["running"], False)
 
+    def test_status_reports_read_langs(self):
+        self.assertEqual(self.get("/api/status")[1]["read_langs"], ["es", "en"])
+
     def test_items_returns_stored_item(self):
         self.add("elpais", "Titular", "https://example.com/a", "Resumen")
         status, body = self.get("/api/items?since=0")
