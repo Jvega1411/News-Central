@@ -1,5 +1,7 @@
 import argparse
+import os
 import socket
+import sys
 import threading
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
@@ -44,6 +46,39 @@ def run_check():
     return 0
 
 
+def setup_log(path, max_bytes=5 * 1024 * 1024):
+    """Send stdout and stderr to a file. Needed under pythonw, which has no console.
+    A file over max_bytes is moved to <path>.1 first (one previous file is kept)."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    try:
+        if os.path.getsize(path) > max_bytes:
+            os.replace(path, path + ".1")
+    except OSError:
+        pass
+    stream = open(path, "a", encoding="utf-8", buffering=1)
+    sys.stdout = sys.stderr = stream
+    return stream
+
+
+ES_CONTINUOUS = 0x80000000
+ES_SYSTEM_REQUIRED = 0x00000001
+
+
+def keep_awake(on):
+    """Ask Windows not to sleep on idle while this thread is alive (on=True), or withdraw the
+    request (on=False). Call it from the thread that runs the server. It does not override the
+    lid-close action: tools/windows/install.ps1 sets that. Returns True when Windows accepted."""
+    if os.name != "nt":
+        if on:
+            print("keep_awake is only supported on Windows; ignored", flush=True)
+        return False
+    import ctypes
+    fn = ctypes.windll.kernel32.SetThreadExecutionState
+    fn.argtypes = [ctypes.c_uint]
+    fn.restype = ctypes.c_uint
+    return bool(fn(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if on else 0)))
+
+
 def main():
     ap = argparse.ArgumentParser(description="News Central: local world-news reader")
     ap.add_argument("--port", type=int, default=None)
@@ -68,6 +103,8 @@ def main():
         print(e)
         return 2
     p = paths(cfg)
+    if p["log"]:
+        setup_log(p["log"])
     lan = cfg["listen"] != "127.0.0.1"
     store = Store(p["db"])
     fetcher = Fetcher(store, cfg["refresh_minutes"] * 60, p["status"])
@@ -89,8 +126,12 @@ def main():
     print("Keep this window open while you read. Close it (or press Ctrl+C) to stop.", flush=True)
     if args.open:
         threading.Timer(1.0, webbrowser.open, args=(url,)).start()
+    awake = cfg["keep_awake"] and keep_awake(True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        if awake:
+            keep_awake(False)
     return 0

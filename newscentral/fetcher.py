@@ -120,7 +120,7 @@ class Fetcher(threading.Thread):
             self.last_cycle = time.time()
             self.store.add_run(started, self.last_cycle, len(todo), new_total, errors)
             self.write_status()
-            print(time.strftime("%H:%M:%S"), "checked %d sources, %d new items" % (len(todo), new_total),
+            print(time.strftime("%Y-%m-%d %H:%M:%S"), "checked %d sources, %d new items" % (len(todo), new_total),
                   flush=True)
         finally:
             self.running = False
