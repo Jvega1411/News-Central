@@ -186,7 +186,7 @@ function wireSpineEvents(container) {
     if (toggleBtn) {
       var regionName = toggleBtn.dataset.spineToggle;
       // flip: default is collapsed (undefined treated as true)
-      _collapsed[regionName] = !(_collapsed[regionName] === false);
+      _collapsed[regionName] = (_collapsed[regionName] === false); // undefined or true -> expand
       renderSpine();
       return;
     }
