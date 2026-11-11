@@ -3,6 +3,8 @@ import os
 import shutil
 import signal
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -13,6 +15,37 @@ from newscentral.jobs import Job
 from newscentral.store import Store, schema_version
 from newscentral.supervisor import EXIT_SCHEMA
 from newscentral.worker import Worker, install_signal_handlers
+
+
+class TestParentAlive(unittest.TestCase):
+    def test_current_process_is_alive(self):
+        self.assertTrue(worker_mod.parent_alive(os.getpid()))
+
+    def test_exited_process_is_not_alive(self):
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        child.wait()
+        self.assertFalse(worker_mod.parent_alive(child.pid))
+
+    def test_loop_exits_when_parent_is_gone(self):
+        w = Worker(None, [], idle_seconds=60, parent_check=lambda: False)
+        t = threading.Thread(target=w.run_forever, daemon=True)
+        t.start()
+        t.join(5)
+        self.assertFalse(t.is_alive())
+
+    def test_idle_sleep_notices_parent_death(self):
+        alive = [True]
+        w = Worker(None, [], idle_seconds=60, parent_check=lambda: alive[0])
+        worker_mod.PARENT_CHECK_SECONDS, old = 0.05, worker_mod.PARENT_CHECK_SECONDS
+        try:
+            t = threading.Thread(target=w.run_forever, daemon=True)
+            t.start()
+            time.sleep(0.2)
+            alive[0] = False
+            t.join(5)
+            self.assertFalse(t.is_alive())
+        finally:
+            worker_mod.PARENT_CHECK_SECONDS = old
 
 
 class ListJob(Job):

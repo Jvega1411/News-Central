@@ -4,6 +4,7 @@
 # must already be at the schema version of this code.
 import argparse
 import collections
+import os
 import signal
 import sqlite3
 import sys
@@ -15,6 +16,26 @@ from .store import SchemaMismatch, Store
 from .supervisor import EXIT_SCHEMA
 
 IDLE_SECONDS = 30
+PARENT_CHECK_SECONDS = 5
+
+
+def parent_alive(pid):
+    """True while process `pid` (the server that started this worker) is still running."""
+    if os.name == "nt":
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+        kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        handle = kernel32.OpenProcess(0x00100000, False, pid)     # SYNCHRONIZE
+        if not handle:
+            return False
+        try:
+            return kernel32.WaitForSingleObject(handle, 0) != 0   # 0 == WAIT_OBJECT_0: exited
+        finally:
+            kernel32.CloseHandle(handle)
+    return os.getppid() == pid
 
 
 def log(*parts):
@@ -22,11 +43,12 @@ def log(*parts):
 
 
 class Worker:
-    def __init__(self, store, jobs, idle_seconds=IDLE_SECONDS, clock=time.time):
+    def __init__(self, store, jobs, idle_seconds=IDLE_SECONDS, clock=time.time, parent_check=None):
         self.store = store
         self.jobs = list(jobs)
         self.idle_seconds = idle_seconds
         self.clock = clock
+        self.parent_check = parent_check      # callable -> bool, or None (manual run: no check)
         self.stopping = threading.Event()
         self.done = {job.name: collections.deque() for job in self.jobs}   # (time, units) per batch
         self.last_batch = {job.name: None for job in self.jobs}
@@ -84,16 +106,30 @@ class Worker:
             return True
         return False
 
+    def idle_wait(self):
+        """Sleep up to idle_seconds, waking at least every PARENT_CHECK_SECONDS to look for the parent."""
+        end = time.monotonic() + self.idle_seconds
+        while not self.stopping.is_set():
+            left = end - time.monotonic()
+            if left <= 0:
+                return
+            self.stopping.wait(min(left, PARENT_CHECK_SECONDS))
+            if self.parent_check is not None and not self.parent_check():
+                return
+
     def run_forever(self):
         log("started; jobs:", ", ".join(j.name for j in self.jobs) or "none")
         while not self.stopping.is_set():
+            if self.parent_check is not None and not self.parent_check():
+                log("parent process is gone; exiting")
+                break
             try:
                 ran = self.step()
             except Exception as e:
                 log("loop error:", e)
                 ran = False
             if not ran:
-                self.stopping.wait(self.idle_seconds)
+                self.idle_wait()
         for job in self.jobs:
             self.status(job, "stopped")
         log("stopped")
@@ -122,6 +158,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="News Central batch-job worker")
     ap.add_argument("--config", default=CONFIG_FILE, help="path to config.json")
     ap.add_argument("--once", action="store_true", help="run one loop step and exit")
+    ap.add_argument("--parent-pid", type=int, default=None,
+                    help="exit when this process is gone (set by the server's supervisor)")
     args = ap.parse_args(argv)
     try:
         cfg = load_config(args.config)
@@ -137,7 +175,8 @@ def main(argv=None):
     except FileNotFoundError as e:
         log(e)
         return 1
-    worker = Worker(store, build_jobs(cfg, p))
+    check = (lambda: parent_alive(args.parent_pid)) if args.parent_pid else None
+    worker = Worker(store, build_jobs(cfg, p), parent_check=check)
     previous = install_signal_handlers(worker)
     try:
         if args.once:

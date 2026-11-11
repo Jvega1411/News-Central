@@ -88,7 +88,8 @@ def start_worker(cfg, config_path, stdout=None, start=True):
     resolves wherever the server was started from."""
     if not cfg["worker"]:
         return None
-    sup = Supervisor([sys.executable, "-m", "newscentral.worker", "--config", config_path],
+    sup = Supervisor([sys.executable, "-m", "newscentral.worker", "--config", config_path,
+                      "--parent-pid", str(os.getpid())],
                      cwd=BASE_DIR, stdout=stdout)
     if start:
         sup.start()

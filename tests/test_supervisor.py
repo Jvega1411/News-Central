@@ -1,3 +1,4 @@
+import os
 import sys
 import time
 import unittest
@@ -73,7 +74,8 @@ class TestStartWorker(unittest.TestCase):
 
     def test_command_and_working_directory(self):
         sup = cli.start_worker({"worker": True}, "C:/x/config.json", start=False)
-        self.assertEqual(sup.cmd, [sys.executable, "-m", "newscentral.worker", "--config", "C:/x/config.json"])
+        self.assertEqual(sup.cmd, [sys.executable, "-m", "newscentral.worker", "--config", "C:/x/config.json",
+                                   "--parent-pid", str(os.getpid())])
         self.assertEqual(sup.cwd, config.BASE_DIR)
         self.assertFalse(sup.is_alive())
 
