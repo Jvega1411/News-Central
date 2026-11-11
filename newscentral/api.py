@@ -261,6 +261,8 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
         except Exception:
             return self._json({"error": "bad request"}, 400)
+        if not isinstance(body, dict):
+            return self._json({"error": "bad request"}, 400)
         path = urllib.parse.urlsplit(self.path).path
         item_id = str(body.get("id", ""))
         try:

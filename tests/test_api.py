@@ -41,6 +41,9 @@ class TestApi(ApiCase):
         self.assertEqual(status, 403)
         self.assertEqual(self.fetcher.refreshed, 0)
 
+    def test_post_body_must_be_an_object(self):
+        self.assertEqual(self.post("/api/save", ["not", "an", "object"])[0], 400)
+
     def test_refresh(self):
         status, body = self.post("/api/refresh")
         self.assertEqual((status, body), (200, {"started": True}))
