@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Categories</title>
+    <link>https://example.com/</link>
+    <item>
+      <title>Tagged item</title>
+      <link>https://example.com/tagged</link>
+      <category>Economy</category>
+      <category><![CDATA[World News]]></category>
+      <category>Pol&#237;tica</category>
+      <category>economy</category>
+    </item>
+    <item>
+      <title>Subject item</title>
+      <link>https://example.com/subject</link>
+      <dc:subject>Trade</dc:subject>
+    </item>
+    <item>
+      <title>Plain item</title>
+      <link>https://example.com/plain</link>
+    </item>
+  </channel>
+</rss>

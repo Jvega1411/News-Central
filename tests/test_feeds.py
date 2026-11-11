@@ -42,5 +42,41 @@ class TestParseFeed(unittest.TestCase):
             parse_feed(b"not a feed at all", "https://example.com/")
 
 
+class TestTags(unittest.TestCase):
+    def test_rss_tags_decoded_deduped_in_order(self):
+        items = parse_feed(load("categories.xml"), "https://example.com/feed")
+        self.assertEqual(items[0]["tags"], ["Economy", "World News", "Política"])
+
+    def test_dc_subject(self):
+        items = parse_feed(load("categories.xml"), "https://example.com/feed")
+        self.assertEqual(items[1]["tags"], ["Trade"])
+
+    def test_no_categories_gives_empty_list(self):
+        items = parse_feed(load("categories.xml"), "https://example.com/feed")
+        self.assertEqual(items[2]["tags"], [])
+
+    def test_atom_term_preferred_over_label(self):
+        items = parse_feed(load("categories-atom.xml"), "https://example.com/feed")
+        self.assertEqual(items[0]["tags"], ["economy", "Trade"])
+
+    def test_limits(self):
+        cats = "".join("<category>tag%d</category>" % i for i in range(15))
+        long_tag = "<category>%s</category>" % ("x" * 100)
+        xml = ('<rss version="2.0"><channel><item><title>T</title><link>https://example.com/a</link>%s</item>'
+               '<item><title>U</title><link>https://example.com/b</link>%s</item></channel></rss>' % (cats, long_tag))
+        items = parse_feed(xml.encode("utf-8"), "https://example.com/feed")
+        self.assertEqual(items[0]["tags"], ["tag%d" % i for i in range(10)])
+        self.assertLessEqual(len(items[1]["tags"][0]), 60)
+        self.assertTrue(items[1]["tags"][0].startswith("xxxx"))
+
+    def test_regex_fallback_returns_tags(self):
+        xml = ('<rss><channel><item><title>Broken & bad</title><link>https://example.com/b</link>'
+               '<category><![CDATA[Politics]]></category><category>economy</category>'
+               '<category>Economy</category><category term="Trade"/>'
+               '<unclosed></item></channel>').encode("utf-8")
+        items = parse_feed(xml, "https://example.com/feed")
+        self.assertEqual(items[0]["tags"], ["Politics", "economy", "Trade"])
+
+
 if __name__ == "__main__":
     unittest.main()

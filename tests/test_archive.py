@@ -1,5 +1,6 @@
 # tests/test_archive.py
 import inspect
+import json
 import os
 import shutil
 import sqlite3
@@ -103,6 +104,8 @@ class TestUpgradeFromV1(StoreCase):
         self.assertEqual(s.db.execute("PRAGMA user_version").fetchone()[0], store_mod.schema_version())
         self.assertEqual(s.db.execute("SELECT COUNT(*) FROM items").fetchone()[0], 1)
         self.assertIn("lang", [r[1] for r in s.db.execute("PRAGMA table_info(items)")])
+        self.assertIn("feed_tags", [r[1] for r in s.db.execute("PRAGMA table_info(items)")])
+        self.assertEqual(store_mod.schema_version(), 5)
 
     def test_failed_migration_rolls_back(self):
         self.open().db.close()
@@ -140,6 +143,23 @@ class TestUpgradeFromV1(StoreCase):
         self.assertEqual((title, summary), ("Café", "xy"))
         self.assertEqual(note, "my​note")                        # the user's own notes are not touched
         self.assertEqual(s.db.execute("SELECT id FROM items").fetchone()[0], "a1")
+
+
+class TestFeedTags(StoreCase):
+    def test_round_trip(self):
+        s = self.open()
+        tags = ["Política", "economy"]
+        s.add_items("elpais", [{"title": "A", "link": "https://example.com/a", "tags": tags},
+                               {"title": "B", "link": "https://example.com/b", "tags": []},
+                               {"title": "C", "link": "https://example.com/c"}], "es")
+        rows = {r["title"]: r["feed_tags"] for r in s.db.execute("SELECT title, feed_tags FROM items")}
+        self.assertEqual(json.loads(rows["A"]), tags)
+        self.assertIn("Política", rows["A"])                  # stored as UTF-8, not \u escapes
+        self.assertIsNone(rows["B"])
+        self.assertIsNone(rows["C"])
+
+    def test_schema_version_is_5(self):
+        self.assertEqual(store_mod.schema_version(), 5)
 
 
 class TestTruncatedFlag(ApiCase):

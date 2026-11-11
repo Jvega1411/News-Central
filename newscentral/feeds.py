@@ -85,6 +85,35 @@ def child_text(el, *names):
     return ""
 
 
+MAX_TAGS = 10
+MAX_TAG_CHARS = 60
+
+
+def clean_tags(values):
+    """Normalize, drop empties and case-insensitive duplicates (first spelling wins), keep 10."""
+    out, seen = [], set()
+    for value in values:
+        tag = normalize(value, MAX_TAG_CHARS)
+        if not tag or tag.lower() in seen:
+            continue
+        seen.add(tag.lower())
+        out.append(tag)
+        if len(out) >= MAX_TAGS:
+            break
+    return out
+
+
+def entry_tags(el):
+    """Raw category labels a feed attaches to one entry: <category> (text, else term, else label),
+    then <dc:subject>."""
+    values = []
+    for child in el.findall("category"):
+        values.append("".join(child.itertext()).strip() or child.get("term") or child.get("label") or "")
+    for child in el.findall("subject"):
+        values.append("".join(child.itertext()).strip())
+    return clean_tags(values)
+
+
 def entry_link(el, base):
     orig = child_text(el, "origLink")  # FeedBurner keeps the real URL here
     if orig:
@@ -132,7 +161,8 @@ def parse_entry(el, base):
         summary = ""
     published = parse_date(child_text(el, "pubDate", "published", "updated", "date",
                                       "issued", "modified", "created"))
-    return {"title": title, "link": normalize_link(link), "summary": summary, "published": published}
+    return {"title": title, "link": normalize_link(link), "summary": summary, "published": published,
+            "tags": entry_tags(el)}
 
 
 def regex_items(text, base):
@@ -155,11 +185,15 @@ def regex_items(text, base):
         link = urllib.parse.urljoin(base, link) if link else ""
         if not title or not link.startswith(("http://", "https://")):
             continue
+        tag_values = [re.sub(r"(?s)^\s*<!\[CDATA\[(.*?)\]\]>\s*$", r"\1", t).strip()
+                      for t in re.findall(r"(?is)<category\b[^>]*?(?<!/)>(.*?)</category>", body)]
+        tag_values += re.findall(r"""(?is)<category\b[^>]*?\bterm\s*=\s*["']([^"']*)["'][^>]*/>""", body)
         out.append({
             "title": title,
             "link": normalize_link(link),
             "summary": normalize(grab(r"<(description|summary)[^>]*>(.*?)</\1>"), SUMMARY_CHARS),
             "published": parse_date(grab(r"<(pubDate|published|updated|dc:date)[^>]*>(.*?)</\1>")),
+            "tags": clean_tags(tag_values),
         })
     return out
 

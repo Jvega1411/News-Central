@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import re
 import sqlite3
@@ -79,6 +80,11 @@ def _m4_fetch_runs(db):
         id INTEGER PRIMARY KEY AUTOINCREMENT, started REAL NOT NULL, finished REAL,
         sources_checked INTEGER, new_items INTEGER, errors INTEGER)""")
     db.execute("CREATE INDEX fetch_runs_started ON fetch_runs(started)")
+
+
+@migration(5)
+def _m5_item_feed_tags(db):
+    db.execute("ALTER TABLE items ADD COLUMN feed_tags TEXT")
 
 
 def schema_version():
@@ -188,12 +194,13 @@ class Store:
     def add_items(self, source_id, items, lang=None):
         now = time.time()
         rows = [(hashlib.sha1(it["link"].encode("utf-8")).hexdigest()[:16], source_id, it["title"],
-                 it["link"], it.get("summary", ""), it.get("published"), now, lang) for it in items]
+                 it["link"], it.get("summary", ""), it.get("published"), now, lang,
+                 json.dumps(it["tags"], ensure_ascii=False) if it.get("tags") else None) for it in items]
         with self.lock:
             before = self.db.total_changes
             self.db.executemany(
-                "INSERT OR IGNORE INTO items (id, source_id, title, link, summary, published, first_seen, lang) "
-                "VALUES (?,?,?,?,?,?,?,?)", rows)
+                "INSERT OR IGNORE INTO items (id, source_id, title, link, summary, published, first_seen, lang, feed_tags) "
+                "VALUES (?,?,?,?,?,?,?,?,?)", rows)
             self.db.commit()
             return self.db.total_changes - before
 
