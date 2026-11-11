@@ -5,6 +5,7 @@ import threading
 import time
 
 from .sources import country_label
+from .text import canonical
 
 
 def sort_time(published, first_seen):
@@ -57,6 +58,18 @@ def _m2_sources_snapshot_and_item_lang(db):
         first_seen REAL, last_seen REAL, active INTEGER DEFAULT 1)""")
     db.execute("ALTER TABLE items ADD COLUMN lang TEXT")
     db.execute("CREATE INDEX items_source_seen ON items(source_id, first_seen)")
+
+
+@migration(3)
+def _m3_renormalize_text(db):
+    """Bring text stored before the text standard to canonical form. Markup was already stripped
+    when the rows were written, so only the Unicode steps run; ids derive from links and do not change."""
+    for table in ("items", "saved"):
+        rows = db.execute("SELECT id, title, summary FROM %s" % table).fetchall()
+        for row in rows:
+            title, summary = canonical(row[1]), canonical(row[2])
+            if title != (row[1] or "") or summary != (row[2] or ""):
+                db.execute("UPDATE %s SET title = ?, summary = ? WHERE id = ?" % table, (title, summary, row[0]))
 
 
 def schema_version():

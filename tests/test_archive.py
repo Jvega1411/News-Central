@@ -125,6 +125,22 @@ class TestUpgradeFromV1(StoreCase):
         finally:
             db.close()
 
+    def test_existing_text_is_renormalized(self):
+        self.make_v1([
+            ("INSERT INTO items VALUES ('a1','elpais',?,?,?,1.0,2.0)",
+             ("Café a​b", "https://example.com/a", "growth <2% and ­jobs >3%")),
+            ("INSERT INTO saved (id, title, summary, note) VALUES ('a1', ?, ?, ?)",
+             ("Café", "x﻿y", "my​note")),
+        ])
+        s = self.open()
+        title, summary = s.db.execute("SELECT title, summary FROM items").fetchone()
+        self.assertEqual(title, "Café ab")
+        self.assertEqual(summary, "growth <2% and jobs >3%")          # angle brackets survive
+        title, summary, note = s.db.execute("SELECT title, summary, note FROM saved").fetchone()
+        self.assertEqual((title, summary), ("Café", "xy"))
+        self.assertEqual(note, "my​note")                        # the user's own notes are not touched
+        self.assertEqual(s.db.execute("SELECT id FROM items").fetchone()[0], "a1")
+
 
 class TestTruncatedFlag(ApiCase):
     def test_items_reports_truncation(self):
