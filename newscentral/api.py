@@ -8,7 +8,11 @@ from .config import DEFAULTS, INDEX_FILE, LIVE_ROW_LIMIT, LIVE_WINDOW_HOURS, STA
 from .fetcher import source_payload
 from .sources import load_countries, load_press_freedom
 from .stats import gaps, volume
-from .store import sort_time
+from .store import search_terms, sort_time
+
+
+class BadRequest(Exception):
+    pass
 
 
 class App:
@@ -55,6 +59,37 @@ def items_payload(app, since):
                     "lang": r["lang"] or known[r["source_id"]].get("lang", "")})
     out.sort(key=lambda x: x["t"], reverse=True)
     return out, truncated
+
+
+def search_payload(app, q):
+    def one(name):
+        return (q.get(name) or [""])[0].strip()
+
+    def number(name, cast):
+        value = one(name)
+        if not value:
+            return None
+        try:
+            return cast(value)
+        except ValueError:
+            raise BadRequest("%s must be a number" % name)
+
+    text, source = one("q"), one("source")
+    since, until = number("from", float), number("to", float)
+    if not search_terms(text) and since is None and not source:
+        raise BadRequest("give at least one of q, from or source")
+    limit = number("limit", int)
+    limit = 50 if limit is None else min(max(limit, 1), 200)
+    offset = max(number("offset", int) or 0, 0)
+    rows, total, engine = app.store.search(
+        text, since, until, one("region"), one("country").upper(), one("scope"), one("lang").lower(),
+        one("kind"), source, limit, offset)
+    items = [{"id": r["id"], "s": r["source_id"], "t": sort_time(r["published"], r["first_seen"]),
+              "fs": r["first_seen"], "title": r["title"], "link": r["link"], "summary": r["summary"] or "",
+              "lang": r["lang"] or "", "source_name": r["source_name"] or r["source_id"],
+              "region": r["region"] or "", "country_iso": r["country_iso"], "scope": r["scope"],
+              "exile": bool(r["exile"]), "covers": r["covers"], "kind": r["kind"] or "news"} for r in rows]
+    return {"items": items, "total": total, "engine": engine, "limit": limit, "offset": offset}
 
 
 def geo_payload(app, since):
@@ -206,10 +241,14 @@ class Handler(BaseHTTPRequestHandler):
                 if not 1 <= days <= 3650:
                     return self._json({"error": "days must be between 1 and 3650"}, 400)
                 self._json(stats_payload(app, days))
+            elif path == "/api/search":
+                self._json(search_payload(app, q))
             else:
                 self._json({"error": "not found"}, 404)
         except (BrokenPipeError, ConnectionResetError):
             pass
+        except BadRequest as e:
+            self._json({"error": str(e)}, 400)
         except Exception as e:
             self._json({"error": str(e)}, 500)
 

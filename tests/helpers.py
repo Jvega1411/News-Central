@@ -45,10 +45,11 @@ class ApiCase(unittest.TestCase):
 
     sources = SOURCES
     config = None
+    fts = True
 
     def setUp(self):
         self.dir = tempfile.mkdtemp()
-        self.store = Store(os.path.join(self.dir, "news.db"))
+        self.store = Store(os.path.join(self.dir, "news.db"), fts=self.fts)
         self.store.sync_sources(self.sources)
         self.fetcher = FakeFetcher(list(self.sources))
         self.app = App(self.store, self.fetcher, self.config)

@@ -1,5 +1,6 @@
 import hashlib
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -84,12 +85,46 @@ def schema_version():
     return max((v for v, _ in MIGRATIONS), default=0)
 
 
+# ---------------------------------------------------------------- full-text search
+
+FTS_TABLE = ("CREATE VIRTUAL TABLE items_fts USING fts5(title, summary, content='items', "
+             "content_rowid='rowid', tokenize='%s')")
+FTS_TRIGGERS = {
+    "items_fts_ai": "CREATE TRIGGER items_fts_ai AFTER INSERT ON items BEGIN "
+                    "INSERT INTO items_fts(rowid, title, summary) VALUES (new.rowid, new.title, new.summary); END",
+    "items_fts_ad": "CREATE TRIGGER items_fts_ad AFTER DELETE ON items BEGIN "
+                    "INSERT INTO items_fts(items_fts, rowid, title, summary) "
+                    "VALUES ('delete', old.rowid, old.title, old.summary); END",
+    "items_fts_au": "CREATE TRIGGER items_fts_au AFTER UPDATE OF title, summary ON items BEGIN "
+                    "INSERT INTO items_fts(items_fts, rowid, title, summary) "
+                    "VALUES ('delete', old.rowid, old.title, old.summary); "
+                    "INSERT INTO items_fts(rowid, title, summary) VALUES (new.rowid, new.title, new.summary); END",
+}
+
+
+def fts5_available(db):
+    try:
+        db.execute("CREATE VIRTUAL TABLE temp.fts5_probe USING fts5(x)")
+        db.execute("DROP TABLE temp.fts5_probe")
+        return True
+    except sqlite3.OperationalError:
+        return False
+
+
+def search_terms(q):
+    """Words of a user query: runs of letters and digits in any script. Everything else, the
+    underscore included, is dropped, so FTS query syntax (quotes, parentheses, operators, column
+    filters) can never reach the engine and no term is empty after tokenizing."""
+    return re.findall(r"[^\W_]+", q or "", re.UNICODE)
+
+
 # ---------------------------------------------------------------- storage
 
 class Store:
-    def __init__(self, path):
+    def __init__(self, path, fts=True):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         self.lock = threading.Lock()
+        self.fts = False
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         with self.lock:
@@ -109,9 +144,46 @@ class Store:
             self.db.commit()
         try:
             run_migrations(self.db, self.lock)
+            self.ensure_fts(fts)
         except Exception:
             self.db.close()
             raise
+
+    def ensure_fts(self, wanted=True):
+        """The search index is derived data that depends on the SQLite build, not on the schema
+        version, so it is not a numbered migration. Runs at every startup.
+        The index uses the implicit rowid of `items`: never VACUUM the database without calling
+        this afterwards with the triggers dropped, because VACUUM may renumber rowids."""
+        with self.lock:
+            names = {r[0] for r in self.db.execute("SELECT name FROM sqlite_master")}
+            if not (wanted and fts5_available(self.db)):
+                # Triggers that write to a module this build lacks would break every insert.
+                for name in FTS_TRIGGERS:
+                    self.db.execute("DROP TRIGGER IF EXISTS %s" % name)
+                self.db.commit()
+                self.fts = False
+                return False
+            rebuild = False
+            self.db.execute("BEGIN")
+            try:
+                if "items_fts" not in names:
+                    try:
+                        self.db.execute(FTS_TABLE % "unicode61 remove_diacritics 2")
+                    except sqlite3.OperationalError:      # SQLite older than 3.27
+                        self.db.execute(FTS_TABLE % "unicode61")
+                    rebuild = True
+                for name, sql in FTS_TRIGGERS.items():
+                    if name not in names:
+                        self.db.execute(sql)
+                        rebuild = True
+                if rebuild:
+                    self.db.execute("INSERT INTO items_fts(items_fts) VALUES ('rebuild')")
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                raise
+            self.fts = True
+            return True
 
     def add_items(self, source_id, items, lang=None):
         now = time.time()
@@ -193,6 +265,46 @@ class Store:
                 "SELECT CAST(first_seen / 86400 AS INTEGER) AS day, COALESCE(lang, '') AS lang, COUNT(*), "
                 "SUM(LENGTH(title) + LENGTH(COALESCE(summary, ''))) FROM items WHERE first_seen >= ? "
                 "GROUP BY day, lang ORDER BY day DESC, COUNT(*) DESC", (since,))]
+
+    def search(self, q="", since=None, until=None, region=None, country=None, scope=None, lang=None,
+               kind=None, source=None, limit=50, offset=0):
+        """Whole-archive search. Returns (rows, total, engine). Dates filter on first_seen."""
+        terms = search_terms(q)
+        joins = "FROM items i LEFT JOIN sources s ON s.id = i.source_id"
+        where, params = [], []
+        order = "i.first_seen DESC"
+        if terms and self.fts:
+            joins += " JOIN items_fts ON items_fts.rowid = i.rowid"
+            where.append("items_fts MATCH ?")
+            params.append(" ".join('"%s"' % t for t in terms))
+            order = "bm25(items_fts), i.first_seen DESC"
+        elif terms:
+            for t in terms:
+                like = "%" + t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+                where.append("(i.title LIKE ? ESCAPE '\\' OR i.summary LIKE ? ESCAPE '\\')")
+                params.extend([like, like])
+        filters = (
+            ("i.first_seen >= ?", since),
+            ("i.first_seen < ?", until),
+            ("s.region = ?", region),
+            ("(CASE WHEN s.exile = 1 AND s.covers IS NOT NULL THEN s.covers ELSE s.country_iso END) = ?", country),
+            ("s.scope = ?", scope),
+            ("i.lang = ?", lang),
+            ("COALESCE(s.kind, 'news') = ?", kind),
+            ("i.source_id = ?", source),
+        )
+        for clause, value in filters:
+            if value is not None and value != "":
+                where.append(clause)
+                params.append(value)
+        sql_where = (" WHERE " + " AND ".join(where)) if where else ""
+        with self.lock:
+            total = self.db.execute("SELECT COUNT(*) " + joins + sql_where, params).fetchone()[0]
+            rows = [dict(r) for r in self.db.execute(
+                "SELECT i.id, i.source_id, i.title, i.link, i.summary, i.published, i.first_seen, i.lang, "
+                "s.name AS source_name, s.region, s.country_iso, s.scope, s.exile, s.covers, s.kind "
+                + joins + sql_where + " ORDER BY " + order + " LIMIT ? OFFSET ?", params + [limit, offset])]
+        return rows, total, ("fts" if self.fts else "like")
 
     def get_item(self, item_id):
         with self.lock:
