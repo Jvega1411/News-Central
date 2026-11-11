@@ -13,7 +13,7 @@ INDEX_FILE = os.path.join(STATIC_DIR, "index.html")
 
 REFRESH_SECONDS = 900          # background fetch every 15 minutes
 ERROR_RETRY_SECONDS = 3600     # failing sources retried hourly, or on manual refresh
-LIVE_WINDOW_HOURS = 96         # how far back the live feed and the map look; the archive keeps everything
+LIVE_WINDOW_HOURS = 72         # how far back the live feed and the map look; the archive keeps everything
 LIVE_ROW_LIMIT = 30000         # rows per /api/items response; beyond it the response says "truncated"
 FETCH_TIMEOUT = 20
 WORKERS = 16
@@ -36,6 +36,7 @@ DEFAULTS = {
     "translate_batch": 16,
     "worker_threads": None,
     "translate_engine": {"default": "nllb-600m"},
+    "backup_dir": None,
 }
 
 
@@ -64,7 +65,7 @@ def _check(key, value):
     elif key == "translate_engine":
         ok = (isinstance(value, dict) and isinstance(value.get("default"), str)
               and all(isinstance(k, str) and isinstance(v, str) and k and v for k, v in value.items()))
-    elif key == "log_file":
+    elif key in ("log_file", "backup_dir"):
         ok = value is None or (isinstance(value, str) and bool(value))
     else:
         raise ConfigError("config: unknown key %r" % key)
@@ -111,4 +112,5 @@ def paths(cfg):
         "models": os.path.join(data_dir, "models"),
         "bench": os.path.join(data_dir, "bench"),
         "log": resolve(cfg["log_file"]) if cfg.get("log_file") else None,
+        "backup": resolve(cfg["backup_dir"]) if cfg.get("backup_dir") else None,
     }

@@ -5,6 +5,7 @@ import { setState, onState } from './state.js';
 const REGION_ORDER = ['Spain', 'Europe & EU', 'Eurasia', 'Middle East & N. Africa', 'Africa', 'Latin America',
   'North America', 'South Asia', 'East Asia', 'Southeast Asia', 'Oceania', 'Global'];
 const PAGE = 150;
+const LIVE = 72;   // hours kept in memory; matches LIVE_WINDOW_HOURS on the server
 var ARCHIVE_PAGE = 50;
 // Section names in article URLs that mark sports and celebrity coverage (culture, music and film stay in).
 const SPORT_RE = /\/(?:sports?|deportes?|esportes?|futbol|football|soccer|nfl|nba|mlb|tenis|tennis|golf|f1|formula-?1|cricket|rugby|boxeo|boxing|ufc|motorsport|celebrit(?:y|ies)|famosos|farandula|espectaculos|teleshow|showbiz|gente|horoscopos?|horoscopes?|loterias?|lottery|k-?pop)(?:\/|-|\.|$)/;
@@ -22,7 +23,7 @@ const S = {
   items: new Map(), stats: null, sources: {}, sourceList: [], saved: new Map(),
   region: pref.get('region', 'All'), win: pref.get('win', 24), kind: pref.get('kind', 'all'),
   hideState: pref.get('hideState', false), hideSports: pref.get('hideSports', true), showDigested: pref.get('showDigested', false),
-  q: '', src: '', country: '', scope: '', shown: PAGE, cutoff: 0, maxSeen: 0, view: 'feed',
+  q: '', src: '', country: '', scope: '', shown: PAGE, cutoff: 0, maxSeen: 0, loadedFrom: null, view: 'feed',
   running: false, updated: 0, sourcesError: '', booting: true, applyAfterRun: false, timer: null,
   archFrom: '', archTo: '',
   readLangs: ['es', 'en'], showLangs: pref.get('showLangs', false), truncated: false,
@@ -85,8 +86,7 @@ async function loadSources() {
   if (d.read_langs && d.read_langs.length) S.readLangs = d.read_langs;
 }
 
-async function loadItems() {
-  var d = await fetchItems(S.maxSeen);
+function mergeItems(d) {
   var added = 0;
   for (var i = 0; i < d.items.length; i++) {
     var it = d.items[i];
@@ -98,14 +98,43 @@ async function loadItems() {
     if (it.fs > S.maxSeen) S.maxSeen = it.fs;
     added++;
   }
-  S.running = d.running; S.updated = d.updated;
-  S.truncated = !!d.truncated;
-  var minT = Date.now() / 1000 - 96 * 3600;
+  return added;
+}
+
+function pruneItems() {
+  var minT = Date.now() / 1000 - LIVE * 3600;
   for (var entry of S.items) {
     var id = entry[0], item = entry[1];
     if (item.t < minT && item.fs < minT) S.items.delete(id);
   }
+}
+
+async function loadItems() {
+  var since;
+  if (S.loadedFrom === null) {
+    // First load: only the selected window (Archive searches server-side; an hour is enough for the poller).
+    since = Date.now() / 1000 - (S.win === 'archive' ? 1 : S.win) * 3600;
+    S.loadedFrom = since;
+  } else {
+    since = S.maxSeen || S.loadedFrom;
+  }
+  var d = await fetchItems(since);
+  var added = mergeItems(d);
+  S.running = d.running; S.updated = d.updated;
+  S.truncated = !!d.truncated;
+  pruneItems();
   return added;
+}
+
+// The user widened the window past what was loaded: fetch the older part once.
+async function ensureWindow() {
+  if (S.win === 'archive' || S.loadedFrom === null) return;
+  var need = Date.now() / 1000 - S.win * 3600;
+  if (need >= S.loadedFrom) return;
+  var d = await fetchItems(need);
+  mergeItems(d);
+  S.loadedFrom = need;
+  if (d.truncated) S.truncated = true;
 }
 
 async function loadSaved() {
@@ -573,6 +602,7 @@ function wireEvents() {
       S.win = t.value === 'archive' ? 'archive' : +t.value;
       setState({ win: S.win }); pref.set('win', S.win); S.shown = PAGE;
       syncArchiveInputs(); renderFeed();
+      ensureWindow().then(function () { if (S.win !== 'archive') renderFeed(false); }).catch(function () { toast('Server not reachable'); });
     }
     else if (t.id === 'arch-from') { S.archFrom = t.value; renderFeed(); }
     else if (t.id === 'arch-to') { S.archTo = t.value; renderFeed(); }

@@ -159,6 +159,7 @@ class Store:
         if not migrate and not os.path.isfile(path):
             raise FileNotFoundError("database %s does not exist yet; start the server first" % path)
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        self.path = path
         self.lock = threading.Lock()
         self.fts = False
         self.journal_mode = None

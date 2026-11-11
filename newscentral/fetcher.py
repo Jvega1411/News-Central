@@ -5,6 +5,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from .backup import run_backup
 from .config import SOURCES_FILE, REFRESH_SECONDS, ERROR_RETRY_SECONDS, WORKERS
 from .feeds import configured_feeds, fetch_source
 from .http_client import short_error
@@ -31,11 +32,13 @@ def source_payload(sources, store):
 
 
 class Fetcher(threading.Thread):
-    def __init__(self, store, refresh_seconds=REFRESH_SECONDS, status_file=None):
+    def __init__(self, store, refresh_seconds=REFRESH_SECONDS, status_file=None, backup_dir=None):
         super().__init__(daemon=True)
         self.store = store
         self.refresh_seconds = refresh_seconds
         self.status_file = status_file
+        self.backup_dir = backup_dir
+        self.last_backup = 0.0
         self.wake = threading.Event()
         self.force_next = True   # first cycle after start retries everything, failing sources included
         self.running = False
@@ -120,10 +123,24 @@ class Fetcher(threading.Thread):
             self.last_cycle = time.time()
             self.store.add_run(started, self.last_cycle, len(todo), new_total, errors)
             self.write_status()
+            self.maybe_backup()
             print(time.strftime("%Y-%m-%d %H:%M:%S"), "checked %d sources, %d new items" % (len(todo), new_total),
                   flush=True)
         finally:
             self.running = False
+
+    def maybe_backup(self):
+        """Once per UTC day, after a fetch cycle. Never lets a failure stop the fetch loop."""
+        if not self.backup_dir:
+            return
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        if self.last_backup and time.strftime("%Y-%m-%d", time.gmtime(self.last_backup)) == today:
+            return
+        try:
+            run_backup(self.store.path, self.backup_dir)
+            self.last_backup = time.time()
+        except Exception as e:
+            print("backup failed: %s" % e, file=sys.stderr, flush=True)
 
     def write_status(self):
         if not self.status_file:

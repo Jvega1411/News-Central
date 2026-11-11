@@ -20,6 +20,19 @@ class TestApi(ApiCase):
         self.assertEqual([i["title"] for i in body["items"]], ["Titular"])
         self.assertEqual(body["items"][0]["s"], "elpais")
 
+    def test_items_since_returns_only_newer_first_seen(self):
+        import time
+        self.add("elpais", "Old", "https://example.com/old")
+        self.add("elpais", "New", "https://example.com/new")
+        now = time.time()
+        self.store.db.execute("UPDATE items SET first_seen = ? WHERE title = 'Old'", (now - 7200,))
+        self.store.db.execute("UPDATE items SET first_seen = ? WHERE title = 'New'", (now - 600,))
+        self.store.db.commit()
+        _, body = self.get("/api/items?since=%d" % (now - 3600))
+        self.assertEqual([i["title"] for i in body["items"]], ["New"])
+        _, body = self.get("/api/items?since=%d" % (now - 10800))
+        self.assertEqual({i["title"] for i in body["items"]}, {"Old", "New"})
+
     def test_items_skips_unknown_source(self):
         self.add("gone", "Old outlet", "https://example.com/b")
         _, body = self.get("/api/items?since=0")

@@ -9,5 +9,6 @@
   "worker": true,
   "translate_batch": 16,
   "worker_threads": null,
-  "translate_engine": {"default": "nllb-600m"}
+  "translate_engine": {"default": "nllb-600m"},
+  "backup_dir": null
 }

@@ -22,9 +22,15 @@ if (Test-Path $configPath) {
     Write-Host 'config.json already exists and was left unchanged.'
     Write-Host '  Make sure it has  "keep_awake": true  and  "log_file": "data/server.log".'
 } else {
-    $json = "{`n  `"keep_awake`": true,`n  `"log_file`": `"data/server.log`"`n}`n"
+    $json = "{`n  `"keep_awake`": true,`n  `"log_file`": `"data/server.log`""
+    if ($env:OneDrive) {
+        $backupDir = (Join-Path $env:OneDrive 'NewsCentral-backup').Replace('\', '\\')
+        $json += ",`n  `"backup_dir`": `"$backupDir`""
+    }
+    $json += "`n}`n"
     [System.IO.File]::WriteAllText($configPath, $json, $utf8NoBom)
     Write-Host 'Created config.json (keep_awake on, log in data\server.log).'
+    if ($env:OneDrive) { Write-Host "  Daily backup goes to $(Join-Path $env:OneDrive 'NewsCentral-backup')." }
 }
 
 # 2. Power, AC only. Battery settings are not touched.
