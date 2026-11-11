@@ -1,0 +1,229 @@
+import json
+import os
+import time
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from .config import INDEX_FILE, KEEP_HOURS, STATIC_DIR
+from .fetcher import source_payload
+from .sources import load_countries, load_press_freedom
+from .store import sort_time
+
+
+class App:
+    """Everything a request handler needs. One per server; tests build their own."""
+
+    def __init__(self, store, fetcher, config=None):
+        self.store = store
+        self.fetcher = fetcher
+        self.config = config or {}
+
+
+def status_payload(app):
+    f = app.fetcher
+    return {"running": f.running, "updated": f.last_cycle, "sources_error": f.sources_error}
+
+
+def items_payload(app, since):
+    min_time = time.time() - KEEP_HOURS * 3600
+    known = app.fetcher.source_map()
+    out = []
+    for r in app.store.items(max(since, min_time - 3600)):
+        if r["source_id"] not in known:
+            continue
+        t = sort_time(r["published"], r["first_seen"])
+        if t < min_time:
+            continue
+        out.append({"id": r["id"], "s": r["source_id"], "t": t, "fs": r["first_seen"],
+                    "title": r["title"], "link": r["link"], "summary": r["summary"] or ""})
+    out.sort(key=lambda x: x["t"], reverse=True)
+    return out
+
+
+def geo_payload(app, since):
+    cutoff = time.time() - KEEP_HOURS * 3600 - 3600
+    rows = app.store.items(max(since, cutoff))
+    out = aggregate_geo(app.fetcher.sources, rows, load_countries(), since)
+    out["updated"] = app.fetcher.last_cycle
+    out["press_freedom"] = load_press_freedom()
+    return out
+
+
+def aggregate_geo(sources, items, countries, since):
+    min_time = time.time() - KEEP_HOURS * 3600
+    floor = max(since, min_time)
+    by_id = {s["id"]: s for s in sources}
+    countries_out, buckets_out = {}, {}
+    seen_country, seen_bucket = {}, {}  # key -> set of source ids already counted
+
+    def bump(table, seen, key, sid, meta=None):
+        if key not in table:
+            table[key] = {"items": 0, "sources": 0}
+            if meta:
+                table[key].update(meta)
+            seen[key] = set()
+        table[key]["items"] += 1
+        if sid not in seen[key]:
+            seen[key].add(sid)
+            table[key]["sources"] += 1
+
+    for r in items:
+        s = by_id.get(r["source_id"])
+        if not s:
+            continue
+        t = sort_time(r.get("published"), r["first_seen"])
+        if t < floor:
+            continue
+        iso = s.get("covers") if s.get("exile") else s.get("country_iso")
+        if iso:
+            meta = countries.get(iso, {})
+            bump(countries_out, seen_country, iso, s["id"],
+                 {"name": meta.get("name", iso), "region": meta.get("region", "")})
+        elif s.get("scope"):
+            bump(buckets_out, seen_bucket, s["scope"], s["id"])
+    return {"countries": countries_out, "buckets": buckets_out}
+
+
+def export_markdown(app, only_undigested):
+    rows = app.store.saved()
+    if only_undigested:
+        rows = [r for r in rows if not r["digested"]]
+    lines = ["# Saved news for digestion", "",
+             "Exported %s · %d items" % (time.strftime("%Y-%m-%d %H:%M"), len(rows)), ""]
+    for r in rows:
+        lines.append("## " + (r["title"] or ""))
+        where = ", ".join(x for x in (r["country"], r["lang"]) if x)
+        lines.append("- Source: %s%s · %s" % (r["source_name"], " (%s)" % where if where else "", r["region"]))
+        if r["published"]:
+            lines.append("- Published: " + time.strftime("%Y-%m-%d %H:%M", time.localtime(r["published"])))
+        lines.append("- Link: " + (r["link"] or ""))
+        if r["summary"]:
+            lines.append("- Summary: " + r["summary"])
+        if r["note"]:
+            lines.append("- My note: " + " ".join(r["note"].split()))
+        lines.append("")
+    return "\n".join(lines)
+
+
+def static_path(path):
+    """Map a request path to a file under static/, or None if it tries to leave it."""
+    parts = [p for p in path.replace("\\", "/").split("/") if p not in ("", ".")]
+    if not parts or any(p == ".." or ":" in p for p in parts):
+        return None
+    return os.path.join(STATIC_DIR, *parts)
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "NewsCentral/1.0"
+
+    def log_message(self, fmt, *args):
+        pass
+
+    def _send(self, code, body, ctype, extra=None):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _json(self, obj, code=200):
+        self._send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+
+    def _serve_static(self, path, ctype):
+        full = static_path(path)
+        if not full or not os.path.isfile(full):
+            return self._json({"error": "not found"}, 404)
+        with open(full, "rb") as f:
+            self._send(200, f.read(), ctype)
+
+    def do_GET(self):
+        url = urllib.parse.urlsplit(self.path)
+        q = urllib.parse.parse_qs(url.query)
+        path = url.path
+        try:
+            app = self.server.app
+            if path in ("/", "/index.html"):
+                with open(INDEX_FILE, "rb") as f:
+                    self._send(200, f.read(), "text/html; charset=utf-8")
+            elif path.startswith("/js/") and path.endswith(".js"):
+                self._serve_static(path, "text/javascript; charset=utf-8")
+            elif path == "/world.svg":
+                self._serve_static("/world.svg", "image/svg+xml")
+            elif path == "/api/status":
+                self._json(status_payload(app))
+            elif path == "/api/items":
+                try:
+                    since = float((q.get("since") or ["0"])[0] or 0)
+                except ValueError:
+                    since = 0.0
+                payload = status_payload(app)
+                payload["items"] = items_payload(app, since)
+                self._json(payload)
+            elif path == "/api/geo":
+                try:
+                    since = float((q.get("since") or ["0"])[0] or 0)
+                except ValueError:
+                    since = 0.0
+                self._json(geo_payload(app, since))
+            elif path == "/api/sources":
+                payload = status_payload(app)
+                payload["sources"] = source_payload(app.fetcher.sources, app.store)
+                self._json(payload)
+            elif path == "/api/saved":
+                self._json({"saved": app.store.saved()})
+            elif path == "/api/export.md":
+                only = (q.get("only") or [""])[0] == "undigested"
+                extra = {}
+                if (q.get("download") or [""])[0]:
+                    extra["Content-Disposition"] = (
+                        'attachment; filename="news-central-saved-%s.md"' % time.strftime("%Y-%m-%d"))
+                self._send(200, export_markdown(app, only).encode("utf-8"), "text/markdown; charset=utf-8", extra)
+            else:
+                self._json({"error": "not found"}, 404)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as e:
+            self._json({"error": str(e)}, 500)
+
+    def do_POST(self):
+        # The custom header blocks other websites from posting to this local server.
+        if self.headers.get("X-NewsCentral") != "1":
+            return self._json({"error": "forbidden"}, 403)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+        except Exception:
+            return self._json({"error": "bad request"}, 400)
+        path = urllib.parse.urlsplit(self.path).path
+        item_id = str(body.get("id", ""))
+        try:
+            app = self.server.app
+            if path == "/api/refresh":
+                self._json({"started": app.fetcher.refresh_now()})
+            elif path == "/api/save":
+                item = app.store.get_item(item_id)
+                if not item:
+                    return self._json({"error": "item not found"}, 404)
+                app.store.save(item, app.fetcher.source_map().get(item["source_id"], {}))
+                self._json({"ok": True})
+            elif path == "/api/unsave":
+                app.store.unsave(item_id)
+                self._json({"ok": True})
+            elif path == "/api/saved/update":
+                app.store.update_saved(item_id, body.get("note"), body.get("digested"))
+                self._json({"ok": True})
+            else:
+                self._json({"error": "not found"}, 404)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as e:
+            self._json({"error": str(e)}, 500)
+
+
+class Server(ThreadingHTTPServer):
+    # On Windows SO_REUSEADDR lets a second copy bind the same port, so the
+    # "already running" check would never fire. Elsewhere it only skips TIME_WAIT.
+    allow_reuse_address = os.name != "nt"
