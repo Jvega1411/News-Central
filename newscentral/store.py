@@ -272,30 +272,38 @@ class Store:
                  it["link"], it.get("summary", ""), it.get("published"), now, lang,
                  json.dumps(it["tags"], ensure_ascii=False) if it.get("tags") else None) for it in items]
         with self.lock:
-            # rowcount counts only rows inserted into items; total_changes would also count
-            # the rows the FTS triggers write into the index.
-            cur = self.db.executemany(
-                "INSERT OR IGNORE INTO items (id, source_id, title, link, summary, published, first_seen, lang, feed_tags) "
-                "VALUES (?,?,?,?,?,?,?,?,?)", rows)
-            added = max(cur.rowcount, 0)
-            self.db.commit()
+            try:
+                # rowcount counts only rows inserted into items; total_changes would also count
+                # the rows the FTS triggers write into the index.
+                cur = self.db.executemany(
+                    "INSERT OR IGNORE INTO items (id, source_id, title, link, summary, published, first_seen, lang, feed_tags) "
+                    "VALUES (?,?,?,?,?,?,?,?,?)", rows)
+                added = max(cur.rowcount, 0)
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                raise
             return added
 
     def set_state(self, source_id, result):
         now = time.time()
         with self.lock:
-            prev = self.db.execute("SELECT * FROM feed_state WHERE source_id=?", (source_id,)).fetchone()
-            ok = result["status"] in ("ok", "discovered")
-            last_ok = now if ok else (prev["last_ok"] if prev else None)
-            if result.get("not_modified"):
-                count = prev["count"] if prev else 0
-            else:
-                count = len(result["items"])
-            feed_used = result.get("feed") or (prev["feed_used"] if prev else None)
-            self.db.execute("INSERT OR REPLACE INTO feed_state VALUES (?,?,?,?,?,?,?,?,?)",
-                            (source_id, feed_used, result["status"], result.get("error", ""), now,
-                             last_ok, count, result.get("etag"), result.get("lastmod")))
-            self.db.commit()
+            try:
+                prev = self.db.execute("SELECT * FROM feed_state WHERE source_id=?", (source_id,)).fetchone()
+                ok = result["status"] in ("ok", "discovered")
+                last_ok = now if ok else (prev["last_ok"] if prev else None)
+                if result.get("not_modified"):
+                    count = prev["count"] if prev else 0
+                else:
+                    count = len(result["items"])
+                feed_used = result.get("feed") or (prev["feed_used"] if prev else None)
+                self.db.execute("INSERT OR REPLACE INTO feed_state VALUES (?,?,?,?,?,?,?,?,?)",
+                                (source_id, feed_used, result["status"], result.get("error", ""), now,
+                                 last_ok, count, result.get("etag"), result.get("lastmod")))
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                raise
 
     def states(self):
         with self.lock:
@@ -314,24 +322,32 @@ class Store:
         leaves sources.json, and give a language to items stored before the column existed."""
         now = time.time() if now is None else now
         with self.lock:
-            self.db.execute("UPDATE sources SET active = 0")
-            for s in sources:
-                self.db.execute("INSERT OR IGNORE INTO sources (id, first_seen) VALUES (?, ?)", (s["id"], now))
-                self.db.execute(
-                    "UPDATE sources SET name=?, region=?, country_iso=?, scope=?, exile=?, covers=?, lang=?, "
-                    "kind=?, state_media=?, paywall=?, last_seen=?, active=1 WHERE id=?",
-                    (s.get("name", s["id"]), s.get("region", "Other"), s.get("country_iso"), s.get("scope"),
-                     1 if s.get("exile") else 0, s.get("covers"), s.get("lang"), s.get("kind") or "news",
-                     1 if s.get("state_media") else 0, 1 if s.get("paywall") else 0, now, s["id"]))
-            self.db.execute("UPDATE items SET lang = (SELECT lang FROM sources WHERE sources.id = items.source_id) "
-                            "WHERE lang IS NULL")
-            self.db.commit()
+            try:
+                self.db.execute("UPDATE sources SET active = 0")
+                for s in sources:
+                    self.db.execute("INSERT OR IGNORE INTO sources (id, first_seen) VALUES (?, ?)", (s["id"], now))
+                    self.db.execute(
+                        "UPDATE sources SET name=?, region=?, country_iso=?, scope=?, exile=?, covers=?, lang=?, "
+                        "kind=?, state_media=?, paywall=?, last_seen=?, active=1 WHERE id=?",
+                        (s.get("name", s["id"]), s.get("region", "Other"), s.get("country_iso"), s.get("scope"),
+                         1 if s.get("exile") else 0, s.get("covers"), s.get("lang"), s.get("kind") or "news",
+                         1 if s.get("state_media") else 0, 1 if s.get("paywall") else 0, now, s["id"]))
+                self.db.execute("UPDATE items SET lang = (SELECT lang FROM sources WHERE sources.id = items.source_id) "
+                                "WHERE lang IS NULL")
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                raise
 
     def add_run(self, started, finished, sources_checked, new_items, errors):
         with self.lock:
-            self.db.execute("INSERT INTO fetch_runs (started, finished, sources_checked, new_items, errors) "
-                            "VALUES (?,?,?,?,?)", (started, finished, sources_checked, new_items, errors))
-            self.db.commit()
+            try:
+                self.db.execute("INSERT INTO fetch_runs (started, finished, sources_checked, new_items, errors) "
+                                "VALUES (?,?,?,?,?)", (started, finished, sources_checked, new_items, errors))
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                raise
 
     def run_starts(self, since):
         """Start times from `since`, ascending, preceded by the first run ever if it is older."""
@@ -412,27 +428,39 @@ class Store:
 
     def save(self, item, src):
         with self.lock:
-            self.db.execute(
-                "INSERT OR IGNORE INTO saved (id, source_id, source_name, region, country, lang, title, "
-                "link, summary, published, saved_at, country_iso) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                (item["id"], item["source_id"], src.get("name", item["source_id"]), src.get("region", ""),
-                 country_label(src), src.get("lang", ""), item["title"], item["link"],
-                 item["summary"], sort_time(item["published"], item["first_seen"]), time.time(),
-                 src.get("country_iso") or ""))
-            self.db.commit()
+            try:
+                self.db.execute(
+                    "INSERT OR IGNORE INTO saved (id, source_id, source_name, region, country, lang, title, "
+                    "link, summary, published, saved_at, country_iso) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (item["id"], item["source_id"], src.get("name", item["source_id"]), src.get("region", ""),
+                     country_label(src), src.get("lang", ""), item["title"], item["link"],
+                     item["summary"], sort_time(item["published"], item["first_seen"]), time.time(),
+                     src.get("country_iso") or ""))
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                raise
 
     def unsave(self, item_id):
         with self.lock:
-            self.db.execute("DELETE FROM saved WHERE id=?", (item_id,))
-            self.db.commit()
+            try:
+                self.db.execute("DELETE FROM saved WHERE id=?", (item_id,))
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                raise
 
     def update_saved(self, item_id, note=None, digested=None):
         with self.lock:
-            if note is not None:
-                self.db.execute("UPDATE saved SET note=? WHERE id=?", (str(note)[:5000], item_id))
-            if digested is not None:
-                self.db.execute("UPDATE saved SET digested=? WHERE id=?", (1 if digested else 0, item_id))
-            self.db.commit()
+            try:
+                if note is not None:
+                    self.db.execute("UPDATE saved SET note=? WHERE id=?", (str(note)[:5000], item_id))
+                if digested is not None:
+                    self.db.execute("UPDATE saved SET digested=? WHERE id=?", (1 if digested else 0, item_id))
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                raise
 
     def saved(self):
         with self.lock:
@@ -441,11 +469,15 @@ class Store:
     def set_worker_status(self, job, state, last_batch=None, done_last_hour=0, last_error="", now=None):
         now = time.time() if now is None else now
         with self.lock:
-            self.db.execute(
-                "INSERT OR REPLACE INTO worker_status (job, state, last_batch, done_last_hour, last_error, updated) "
-                "VALUES (?,?,?,?,?,?)", (job, state, last_batch, int(done_last_hour or 0),
-                                         str(last_error or "")[:500], now))
-            self.db.commit()
+            try:
+                self.db.execute(
+                    "INSERT OR REPLACE INTO worker_status (job, state, last_batch, done_last_hour, last_error, updated) "
+                    "VALUES (?,?,?,?,?,?)", (job, state, last_batch, int(done_last_hour or 0),
+                                             str(last_error or "")[:500], now))
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                raise
 
     def worker_status(self):
         with self.lock:

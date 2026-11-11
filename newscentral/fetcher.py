@@ -117,9 +117,12 @@ class Fetcher(threading.Thread):
                         result = {"feed": (configured_feeds(s)[:1] or [""])[0], "items": [], "status": "error", "error": short_error(e)}
                     if result["status"] == "error":
                         errors += 1
-                    if result["items"]:
-                        new_total += self.store.add_items(s["id"], result["items"], s.get("lang"))
-                    self.store.set_state(s["id"], result)
+                    try:
+                        if result["items"]:
+                            new_total += self.store.add_items(s["id"], result["items"], s.get("lang"))
+                        self.store.set_state(s["id"], result)
+                    except Exception as e:
+                        print("store write failed for %s: %s" % (s["id"], e), file=sys.stderr, flush=True)
             self.last_cycle = time.time()
             self.store.add_run(started, self.last_cycle, len(todo), new_total, errors)
             self.write_status()
