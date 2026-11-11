@@ -143,8 +143,7 @@ quality) where applicable. Backend is covered by `unittest`.
   Haiku for mechanical tasks, Sonnet for JS/integration, two-stage review per
   task. This matches the user's preference to plan with the strong model and
   implement with cheaper models.
-- Git author identity was set repo-locally to `Juan Sebastian Vega
-  <juansebasvega1411@gmail.com>` (there was no global identity). Verify the name
+- Git author identity was set repo-locally to the user's name and email (there was no global identity). Verify the name
   is correct.
 - **Push is blocked from the agent environment:** the only SSH key available is
   a read-only deploy key, and `gh` is not installed. The branch must be pushed
