@@ -6,6 +6,7 @@ import sqlite3
 import threading
 import time
 
+from .config import TARGET_LANG
 from .sources import country_label
 from .text import canonical
 
@@ -150,6 +151,10 @@ BUSY_TIMEOUT_MS = 5000
 
 class SchemaMismatch(Exception):
     """The database was migrated by a different version of the code than the one opening it."""
+
+
+TRANSLATED_FIELDS = ("title", "summary")
+MAX_ATTEMPTS = 3      # failures after which an item's field is skipped until tools/retranslate.py clears it
 
 
 class Store:
@@ -411,3 +416,81 @@ class Store:
     def worker_status(self):
         with self.lock:
             return [dict(r) for r in self.db.execute("SELECT * FROM worker_status ORDER BY job")]
+
+    def _pending_sql(self, field, skip_langs, target, max_attempts):
+        """FROM/WHERE for items whose `field` still needs a translation into `target`."""
+        if field not in TRANSLATED_FIELDS:
+            raise ValueError("field must be one of %r" % (TRANSLATED_FIELDS,))
+        skip = list(skip_langs) + [target]
+        sql = ("FROM items i WHERE i.lang IS NOT NULL AND i.lang NOT IN (%s) AND COALESCE(i.%s, '') != '' "
+               "AND NOT EXISTS (SELECT 1 FROM translations t WHERE t.item_id = i.id AND t.field = ? "
+               "AND t.lang = ?) "
+               "AND NOT EXISTS (SELECT 1 FROM translation_failures f WHERE f.item_id = i.id AND f.field = ? "
+               "AND f.lang = ? AND f.attempts >= ?)" % (",".join("?" * len(skip)), field))
+        return sql, skip + [field, target, field, target, max_attempts]
+
+    def pending_translations(self, skip_langs, target, limit, max_attempts=MAX_ATTEMPTS):
+        """Every pending title, newest first, then every pending summary, newest first, so a
+        backlog grows in summaries, never in titles."""
+        out = []
+        with self.lock:
+            for field in TRANSLATED_FIELDS:
+                if len(out) >= limit:
+                    break
+                sql, params = self._pending_sql(field, skip_langs, target, max_attempts)
+                rows = self.db.execute(
+                    "SELECT i.id, i.lang, i.%s AS text, i.first_seen " % field + sql +
+                    " ORDER BY i.first_seen DESC LIMIT ?", params + [limit - len(out)]).fetchall()
+                out.extend({"item_id": r["id"], "field": field, "lang": r["lang"], "text": r["text"],
+                            "first_seen": r["first_seen"]} for r in rows)
+        return out
+
+    def save_translations(self, results, now=None):
+        """Write one batch in one transaction. A result with text and no error replaces any earlier
+        translation of that field and clears its failures; any other result adds one attempt.
+        Returns the number of successes."""
+        now = time.time() if now is None else now
+        done = 0
+        with self.lock:
+            self.db.execute("BEGIN")
+            try:
+                for r in results:
+                    key = (r["item_id"], r["field"], r["lang"])
+                    if r.get("error") or not r.get("text"):
+                        error = str(r.get("error") or "empty output")[:500]
+                        cur = self.db.execute(
+                            "UPDATE translation_failures SET attempts = attempts + 1, last_error = ?, last_try = ? "
+                            "WHERE item_id = ? AND field = ? AND lang = ?", (error, now) + key)
+                        if cur.rowcount == 0:
+                            self.db.execute(
+                                "INSERT INTO translation_failures (item_id, field, lang, attempts, last_error, "
+                                "last_try) VALUES (?,?,?,1,?,?)", key + (error, now))
+                    else:
+                        # DELETE then INSERT, not INSERT OR REPLACE: REPLACE does not fire the delete
+                        # trigger that keeps translations_fts in step (Task 8).
+                        self.db.execute("DELETE FROM translations WHERE item_id = ? AND field = ? AND lang = ?", key)
+                        self.db.execute("INSERT INTO translations (item_id, field, lang, text, engine, created) "
+                                        "VALUES (?,?,?,?,?,?)", key + (r["text"], r["engine"], now))
+                        self.db.execute("DELETE FROM translation_failures WHERE item_id = ? AND field = ? "
+                                        "AND lang = ?", key)
+                        done += 1
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                raise
+        return done
+
+    def translation_counts(self, skip_langs, target, now=None, max_attempts=MAX_ATTEMPTS):
+        now = time.time() if now is None else now
+        out = {}
+        with self.lock:
+            for field, name in (("title", "pending_titles"), ("summary", "pending_summaries")):
+                sql, params = self._pending_sql(field, skip_langs, target, max_attempts)
+                out[name] = self.db.execute("SELECT COUNT(*) " + sql, params).fetchone()[0]
+            out["done_24h"] = self.db.execute(
+                "SELECT COUNT(*) FROM translations WHERE lang = ? AND created >= ?",
+                (target, now - 86400)).fetchone()[0]
+            out["failed"] = self.db.execute(
+                "SELECT COUNT(*) FROM translation_failures WHERE lang = ? AND attempts >= ?",
+                (target, max_attempts)).fetchone()[0]
+        return out

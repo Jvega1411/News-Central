@@ -92,3 +92,49 @@ class ApiCase(unittest.TestCase):
             lang = self.fetcher.source_map().get(source_id, {}).get("lang")
         self.store.add_items(source_id, [{"title": title, "link": link, "summary": summary,
                                           "published": published}], lang)
+
+
+class TranslationCase(unittest.TestCase):
+    """A temporary database with items in Arabic, Russian, Spanish and English, at known times.
+    self.ids maps a short key to the item id."""
+
+    READ = ["es", "en"]
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.store = Store(os.path.join(self.dir, "news.db"))
+        self.store.sync_sources(SOURCES)
+        self.ids = {}
+        self.add_at("old_ar", "ahram", "الأخبار", "ملخص", 1000)
+        self.add_at("new_ru", "meduza", "Новости", "Текст", 2000)
+        self.add_at("es", "elpais", "Titular", "Resumen", 3000)
+        self.add_at("en", "bbc", "Headline", "Summary", 4000)
+        self.add_at("ar_no_summary", "ahram", "خبر", "", 500)
+
+    def tearDown(self):
+        self.store.db.close()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def add_at(self, key, source, title, summary, first_seen):
+        link = "https://example.com/" + key
+        lang = {s["id"]: s["lang"] for s in SOURCES}[source]
+        self.store.add_items(source, [{"title": title, "link": link, "summary": summary}], lang)
+        item_id = self.store.db.execute("SELECT id FROM items WHERE link = ?", (link,)).fetchone()[0]
+        self.store.db.execute("UPDATE items SET first_seen = ? WHERE id = ?", (first_seen, item_id))
+        self.store.db.commit()
+        self.ids[key] = item_id
+        return item_id
+
+    def queue(self, limit=50):
+        return [(u["item_id"], u["field"]) for u in self.store.pending_translations(self.READ, "es", limit)]
+
+    def key(self, name, field):
+        return (self.ids[name], field)
+
+
+def tr_ok(item_id, field, text="texto", engine="fake"):
+    return {"item_id": item_id, "field": field, "lang": "es", "text": text, "engine": engine, "error": ""}
+
+
+def tr_failed(item_id, field, error="boom"):
+    return {"item_id": item_id, "field": field, "lang": "es", "text": "", "engine": "fake", "error": error}
