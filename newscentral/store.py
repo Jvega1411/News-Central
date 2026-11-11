@@ -463,6 +463,22 @@ class Store:
                "AND f.lang = ? AND f.attempts >= ?)" % (",".join("?" * len(skip)), field))
         return sql, skip + [field, target, field, target, max_attempts]
 
+    def sample_by_lang(self, skip_langs, per_lang):
+        """The newest `per_lang` items of every language not in skip_langs, languages in
+        alphabetical order. For the translation benchmark."""
+        skip = list(skip_langs)
+        marks = ",".join("?" * len(skip))
+        with self.lock:
+            langs = [r[0] for r in self.db.execute(
+                "SELECT DISTINCT lang FROM items WHERE lang IS NOT NULL AND lang NOT IN (%s) ORDER BY lang"
+                % marks, skip)]
+            rows = []
+            for lang in langs:
+                rows.extend(dict(r) for r in self.db.execute(
+                    "SELECT id, source_id, lang, title, summary, first_seen FROM items WHERE lang = ? "
+                    "ORDER BY first_seen DESC LIMIT ?", (lang, per_lang)))
+        return rows
+
     def pending_translations(self, skip_langs, target, limit, max_attempts=MAX_ATTEMPTS):
         """Every pending title, newest first, then every pending summary, newest first, so a
         backlog grows in summaries, never in titles."""
