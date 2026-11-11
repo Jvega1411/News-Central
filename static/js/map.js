@@ -6,6 +6,7 @@
 
 import { fetchGeo } from './api.js';
 import { setState, onState, state } from './state.js';
+import { initZoom } from './mapzoom.js';
 
 var RAMP = ['#cfe1f2', '#93c0e0', '#5699cd', '#2b6cb0', '#13375e'];
 var NO_DATA = '#d9dee4';
@@ -334,6 +335,7 @@ export async function initMap(el) {
   paintMap(_svgRoot, geo);
   if (hasPressData(geo)) buildToggle(el);
   buildTray(el, geo.buckets || {});
+  var zoom = initZoom(_svgRoot, el);
 
   // Mark init complete, then apply current view to decide visibility.
   // The element was born with [hidden] in the HTML; show it only if
@@ -371,6 +373,7 @@ export async function initMap(el) {
 
   // Hover tooltip
   _svgRoot.addEventListener('mousemove', function (e) {
+    if (zoom && zoom.isDragging()) { hideTip(); return; }
     var path = e.target.closest('path[id]');
     if (!path) { hideTip(); return; }
     var iso = path.id.toUpperCase();
