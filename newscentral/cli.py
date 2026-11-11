@@ -106,8 +106,6 @@ def main():
     if p["log"]:
         setup_log(p["log"])
     lan = cfg["listen"] != "127.0.0.1"
-    store = Store(p["db"])
-    fetcher = Fetcher(store, cfg["refresh_minutes"] * 60, p["status"])
     url = "http://127.0.0.1:%d" % cfg["port"]
     try:
         httpd = Server((cfg["listen"], cfg["port"]), Handler)
@@ -116,6 +114,10 @@ def main():
         if args.open:
             webbrowser.open(url)
         return 1
+    # Open the database only once the port is ours, so a second copy never migrates
+    # or writes to the database the running copy is using.
+    store = Store(p["db"])
+    fetcher = Fetcher(store, cfg["refresh_minutes"] * 60, p["status"])
     httpd.app = App(store, fetcher, cfg)
     fetcher.start()
     print("News Central is running at", url)
