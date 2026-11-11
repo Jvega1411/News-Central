@@ -7,6 +7,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCES_FILE = os.path.join(BASE_DIR, "sources.json")
 COUNTRIES_FILE = os.path.join(BASE_DIR, "geo", "countries.json")
 PRESS_FREEDOM_FILE = os.path.join(BASE_DIR, "geo", "press-freedom-2026.json")
+LANGUAGES_FILE = os.path.join(BASE_DIR, "geo", "languages.json")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 INDEX_FILE = os.path.join(STATIC_DIR, "index.html")
 

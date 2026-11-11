@@ -1,6 +1,6 @@
 import json
 
-from .config import SOURCES_FILE, COUNTRIES_FILE, PRESS_FREEDOM_FILE
+from .config import SOURCES_FILE, COUNTRIES_FILE, PRESS_FREEDOM_FILE, LANGUAGES_FILE
 
 
 _COUNTRIES = None
@@ -41,10 +41,27 @@ def load_sources():
     return out
 
 
+_LANGUAGES = None
+
+def load_languages():
+    global _LANGUAGES
+    if _LANGUAGES is None:
+        with open(LANGUAGES_FILE, encoding="utf-8") as f:
+            _LANGUAGES = json.load(f)
+    return _LANGUAGES
+
+
+def latin_script(lang):
+    """True when the language is written in Latin script, or is unknown."""
+    meta = load_languages().get(lang or "")
+    return meta is None or meta["script"] == "Latn"
+
+
+KIND_VOCAB = ("news", "analysis", "official")
 SCOPE_VOCAB = ("Global", "Intergovernmental", "Transnational-regional")
 
 
-def validate_sources(sources, countries):
+def validate_sources(sources, countries, languages=None):
     errors = []
     for s in sources:
         sid = s.get("id", "?")
@@ -66,6 +83,13 @@ def validate_sources(sources, countries):
                 errors.append("%s: exile source missing 'covers'" % sid)
             elif cov not in countries:
                 errors.append("%s: covers %r not in country reference" % (sid, cov))
+        if languages is not None:
+            lang = s.get("lang")
+            if lang not in languages:
+                errors.append("%s: lang %r not in language reference" % (sid, lang))
+        kind = s.get("kind")
+        if kind is not None and kind not in KIND_VOCAB:
+            errors.append("%s: kind %r not in %r" % (sid, kind, KIND_VOCAB))
     return errors
 
 

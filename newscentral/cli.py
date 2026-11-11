@@ -8,7 +8,7 @@ from .api import App, Handler, Server
 from .config import CONFIG_FILE, ConfigError, WORKERS, load_config, paths
 from .feeds import fetch_source
 from .fetcher import Fetcher
-from .sources import load_countries, load_sources, validate_sources
+from .sources import load_countries, load_languages, load_sources, validate_sources
 from .store import Store
 
 
@@ -56,7 +56,7 @@ def main():
     if args.check:
         return run_check()
     if args.check_sources:
-        errs = validate_sources(load_sources(), load_countries())
+        errs = validate_sources(load_sources(), load_countries(), load_languages())
         for e in errs:
             print("FAIL", e)
         print("%d problem(s)" % len(errs))

@@ -35,5 +35,25 @@ class TestValidate(unittest.TestCase):
         src = [{"id": "a", "country_iso": "LV", "exile": True, "covers": "RU", "region": "Eurasia"}]
         self.assertEqual(sources.validate_sources(src, COUNTRIES), [])
 
+    def test_lang_must_be_in_reference(self):
+        langs = {"es": {"name": "Spanish", "script": "Latn", "rtl": False}}
+        countries = {"ES": {"name": "Spain", "region": "Spain"}}
+        ok = {"id": "a", "country_iso": "ES", "lang": "es"}
+        self.assertEqual(sources.validate_sources([ok], countries, langs), [])
+        errs = sources.validate_sources([dict(ok, lang="xx")], countries, langs)
+        self.assertTrue(any("lang" in e for e in errs))
+        errs = sources.validate_sources([{"id": "b", "country_iso": "ES"}], countries, langs)
+        self.assertTrue(any("lang" in e for e in errs))
+
+    def test_kind_vocabulary(self):
+        langs = {"es": {"name": "Spanish", "script": "Latn", "rtl": False}}
+        countries = {"ES": {"name": "Spain", "region": "Spain"}}
+        base = {"id": "a", "country_iso": "ES", "lang": "es"}
+        for kind in ("news", "analysis", "official"):
+            self.assertEqual(sources.validate_sources([dict(base, kind=kind)], countries, langs), [])
+        self.assertEqual(sources.validate_sources([base], countries, langs), [])   # kind is optional
+        errs = sources.validate_sources([dict(base, kind="blog")], countries, langs)
+        self.assertTrue(any("kind" in e for e in errs))
+
 if __name__ == "__main__":
     unittest.main()
