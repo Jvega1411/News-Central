@@ -4,11 +4,12 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .config import DEFAULTS, INDEX_FILE, LIVE_ROW_LIMIT, LIVE_WINDOW_HOURS, STATIC_DIR, TARGET_LANG
+from .config import DEFAULTS, INDEX_FILE, LIVE_ROW_LIMIT, LIVE_WINDOW_HOURS, STATIC_DIR, TARGET_LANG, paths
 from .fetcher import source_payload
 from .sources import load_countries, load_press_freedom
 from .stats import gaps, volume
 from .store import search_terms, sort_time
+from .translate import bench
 
 
 class BadRequest(Exception):
@@ -181,6 +182,36 @@ def export_markdown(app, only_undigested):
     return "\n".join(lines)
 
 
+def bench_payload(app, date=None):
+    bench_dir = paths(app.config)["bench"]
+    dates = bench.list_dates(bench_dir)
+    if not dates:
+        return {"dates": [], "date": None, "engines": [], "machine": "", "items": [], "sample": [],
+                "has_scores": False}
+    if date and date not in dates:
+        raise BadRequest("no benchmark for that date")
+    date = date or dates[-1]
+    data, scores, review = bench.load_round(bench_dir, date)
+    items = [dict(it, scores=scores.get(it["key"], {}), review=review.get(it["key"], {})) for it in data["items"]]
+    return {"dates": dates, "date": date, "engines": sorted(data["engines"]), "machine": data.get("machine", ""),
+            "items": items, "sample": bench.review_sample(data, scores), "has_scores": bool(scores)}
+
+
+def bench_review(app, body):
+    bench_dir = paths(app.config)["bench"]
+    date = str(body.get("date") or "")
+    if date not in bench.list_dates(bench_dir):
+        raise BadRequest("unknown benchmark date")
+    data, _, _ = bench.load_round(bench_dir, date)
+    key, engine = str(body.get("key") or ""), str(body.get("engine") or "")
+    if key not in {it["key"] for it in data["items"]}:
+        raise BadRequest("unknown item")
+    if engine not in data["engines"]:
+        raise BadRequest("unknown engine")
+    bench.save_review(bench_dir, date, key, engine, bool(body.get("disagree")), body.get("note") or "")
+    return {"ok": True}
+
+
 def static_path(path):
     """Map a request path to a file under static/, or None if it tries to leave it."""
     parts = [p for p in path.replace("\\", "/").split("/") if p not in ("", ".")]
@@ -277,6 +308,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(stats_payload(app, days))
             elif path == "/api/search":
                 self._json(search_payload(app, q))
+            elif path == "/bench/translate":
+                self._serve_static("/bench.html", "text/html; charset=utf-8")
+            elif path == "/api/bench/translate":
+                self._json(bench_payload(app, (q.get("date") or [""])[0]))
             else:
                 self._json({"error": "not found"}, 404)
         except (BrokenPipeError, ConnectionResetError):
@@ -315,10 +350,14 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/saved/update":
                 app.store.update_saved(item_id, body.get("note"), body.get("digested"))
                 self._json({"ok": True})
+            elif path == "/api/bench/review":
+                self._json(bench_review(app, body))
             else:
                 self._json({"error": "not found"}, 404)
         except (BrokenPipeError, ConnectionResetError):
             pass
+        except BadRequest as e:
+            self._json({"error": str(e)}, 400)
         except Exception as e:
             self._json({"error": str(e)}, 500)
 
