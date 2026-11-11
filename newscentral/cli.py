@@ -7,11 +7,12 @@ import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 
 from .api import App, Handler, Server
-from .config import CONFIG_FILE, ConfigError, WORKERS, load_config, paths
+from .config import BASE_DIR, CONFIG_FILE, ConfigError, WORKERS, load_config, paths
 from .feeds import fetch_source
 from .fetcher import Fetcher
 from .sources import load_countries, load_languages, load_sources, validate_sources
 from .store import Store
+from .supervisor import Supervisor
 
 
 def lan_ip():
@@ -79,14 +80,28 @@ def keep_awake(on):
     return bool(fn(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if on else 0)))
 
 
+def start_worker(cfg, config_path, stdout=None, start=True):
+    """Start the batch-job worker as a child process under a supervisor, or return None when
+    the worker is disabled (--no-worker or "worker": false). cwd=BASE_DIR so `-m newscentral.worker`
+    resolves wherever the server was started from."""
+    if not cfg["worker"]:
+        return None
+    sup = Supervisor([sys.executable, "-m", "newscentral.worker", "--config", config_path],
+                     cwd=BASE_DIR, stdout=stdout)
+    if start:
+        sup.start()
+    return sup
+
+
 def main():
-    ap = argparse.ArgumentParser(description="News Central: local world-news reader")
+    ap =argparse.ArgumentParser(description="News Central: local world-news reader")
     ap.add_argument("--port", type=int, default=None)
     ap.add_argument("--lan", action="store_true", help="also serve to other devices on this Wi-Fi")
     ap.add_argument("--config", default=CONFIG_FILE, help="path to config.json")
     ap.add_argument("--open", action="store_true", help="open the reader in the browser after starting")
     ap.add_argument("--check", action="store_true", help="test every source once, print a report and exit")
     ap.add_argument("--check-sources", action="store_true", help="validate source data model and exit")
+    ap.add_argument("--no-worker", action="store_true", help="do not start the batch-job worker")
     args = ap.parse_args()
     if args.check:
         return run_check()
@@ -98,7 +113,8 @@ def main():
         return 1 if errs else 0
 
     try:
-        cfg = load_config(args.config, {"port": args.port, "listen": "0.0.0.0" if args.lan else None})
+        cfg = load_config(args.config, {"port": args.port, "listen": "0.0.0.0" if args.lan else None,
+                                        "worker": False if args.no_worker else None})
     except ConfigError as e:
         print(e)
         return 2
@@ -120,6 +136,9 @@ def main():
     fetcher = Fetcher(store, cfg["refresh_minutes"] * 60, p["status"])
     httpd.app = App(store, fetcher, cfg)
     fetcher.start()
+    # The worker opens the database only after this process has migrated it (Store above).
+    # Under pythonw the log file is the only usable output, so the child writes there too.
+    worker = start_worker(cfg, os.path.abspath(args.config), sys.stdout if p["log"] else None)
     print("News Central is running at", url)
     if lan:
         ip = lan_ip()
@@ -134,6 +153,8 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        if worker:
+            worker.stop()
         if awake:
             keep_awake(False)
     return 0
