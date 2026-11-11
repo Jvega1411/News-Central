@@ -1,10 +1,11 @@
 'use strict';
-import { fetchSources, fetchItems, fetchSaved, postRefresh, postSave, postUnsave, postSavedUpdate, fetchExportMd, fetchStats } from './api.js';
+import { fetchSources, fetchItems, fetchSaved, postRefresh, postSave, postUnsave, postSavedUpdate, fetchExportMd, fetchStats, fetchSearch } from './api.js';
 import { setState, onState } from './state.js';
 
 const REGION_ORDER = ['Spain', 'Europe & EU', 'Eurasia', 'Middle East & N. Africa', 'Africa', 'Latin America',
   'North America', 'South Asia', 'East Asia', 'Southeast Asia', 'Oceania', 'Global'];
 const PAGE = 150;
+var ARCHIVE_PAGE = 50;
 // Section names in article URLs that mark sports and celebrity coverage (culture, music and film stay in).
 const SPORT_RE = /\/(?:sports?|deportes?|esportes?|futbol|football|soccer|nfl|nba|mlb|tenis|tennis|golf|f1|formula-?1|cricket|rugby|boxeo|boxing|ufc|motorsport|celebrit(?:y|ies)|famosos|farandula|espectaculos|teleshow|showbiz|gente|horoscopos?|horoscopes?|loterias?|lottery|k-?pop)(?:\/|-|\.|$)/;
 function isSportOrCeleb(link) {
@@ -23,6 +24,8 @@ const S = {
   hideState: pref.get('hideState', false), hideSports: pref.get('hideSports', true), showDigested: pref.get('showDigested', false),
   q: '', src: '', country: '', scope: '', shown: PAGE, cutoff: 0, maxSeen: 0, view: 'feed',
   running: false, updated: 0, sourcesError: '', booting: true, applyAfterRun: false, timer: null,
+  archFrom: '', archTo: '',
+  archive: { key: null, items: [], total: 0, loading: false, error: '' },
   _ignoreState: false
 };
 
@@ -164,8 +167,8 @@ function renderStatus() {
   $('#status').textContent = txt;
 }
 
-function itemHTML(it, now) {
-  var src = S.sources[it.s];
+function itemHTML(it, now, src) {
+  src = src || S.sources[it.s];
   var d = new Date(it.t * 1000);
   var sameDay = d.toDateString() === new Date().toDateString();
   var top = sameDay ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -190,7 +193,101 @@ function itemHTML(it, now) {
     (saved ? '★' : '☆') + '</button></article>';
 }
 
+/* ------------------------------------------------------------ archive mode */
+
+function dayStart(v) { return v ? new Date(v + 'T00:00:00').getTime() / 1000 : ''; }
+
+function archiveParams() {
+  var p = { q: S.q.trim(), from: dayStart(S.archFrom), to: S.archTo ? dayStart(S.archTo) + 86400 : '' };
+  if (S.src) p.source = S.src;
+  if (S.country) p.country = S.country;
+  else if (S.scope) p.scope = S.scope;
+  else if (S.region !== 'All') p.region = S.region;
+  if (S.kind !== 'all') p.kind = S.kind;
+  return p;
+}
+
+// The server needs a text query, a start date or an outlet. Without one there is nothing to ask.
+function archiveHasCriteria(p) { return !!(p.q || p.from !== '' || p.source); }
+
+function archiveSource(it) {
+  var live = S.sources[it.s];
+  if (live) return live;
+  // An outlet that is no longer in sources.json: describe it from the archived row.
+  return { name: it.source_name, country: it.country_iso || it.scope || '', lang: it.lang, kind: it.kind,
+           state_media: false, paywall: false };
+}
+
+function loadArchive(more) {
+  var A = S.archive, p = archiveParams(), key = JSON.stringify(p);
+  if (!more) { A.key = key; A.items = []; A.total = 0; A.error = ''; }
+  if (!archiveHasCriteria(p)) { A.loading = false; return; }
+  p.limit = ARCHIVE_PAGE;
+  p.offset = A.items.length;
+  A.loading = true;
+  fetchSearch(p).then(function (d) {
+    if (A.key !== key) return;                 // the filters changed while this request was out
+    A.items = A.items.concat(d.items);
+    A.total = d.total;
+    A.loading = false;
+    renderArchive();
+  }).catch(function () {
+    if (A.key !== key) return;
+    A.loading = false;
+    A.error = 'Search failed. Is the News Central server running?';
+    renderArchive();
+  });
+}
+
+function renderArchive() {
+  var A = S.archive, p = archiveParams();
+  // loadArchive sets A.key synchronously, so a second render with the same filters does not search again.
+  if (A.key !== JSON.stringify(p)) loadArchive(false);
+
+  var chips = '';
+  if (S.src) {
+    var only = S.sources[S.src] ? S.sources[S.src].name : S.src;
+    chips += '<button class="chip on" data-clearsrc="1">Only ' + esc(only) + ' ✕</button>';
+  }
+  chips += ['All'].concat(regionsPresent()).map(function (g) {
+    return '<button class="chip' + (S.region === g ? ' on' : '') + '" data-region="' + esc(g) + '">' + esc(g) + '</button>';
+  }).join('');
+  $('#regions').innerHTML = chips;
+  $('#banner').style.display = 'none';
+  document.title = 'News Central';
+
+  var el = $('#feed');
+  if (!archiveHasCriteria(p)) {
+    el.innerHTML = '<div class="empty">Type a search, pick a start date or click an outlet name to search the whole archive.</div>';
+    return;
+  }
+  if (A.error) { el.innerHTML = '<div class="empty">' + esc(A.error) + '</div>'; return; }
+  if (!A.items.length) {
+    el.innerHTML = '<div class="empty">' + (A.loading ? 'Searching the archive…' : 'Nothing in the archive matches.') + '</div>';
+    return;
+  }
+  var now = Date.now() / 1000;
+  var h = '<div class="toolbar">' + A.total.toLocaleString() + ' result' + (A.total === 1 ? '' : 's') + ' in the archive</div>';
+  h += A.items.map(function (it) { return itemHTML(it, now, archiveSource(it)); }).join('');
+  if (A.items.length < A.total) {
+    h += '<button class="btn more" id="more">' + (A.loading ? 'Loading…' : 'Show more (' + (A.total - A.items.length) + ' left)') + '</button>';
+  }
+  el.innerHTML = h;
+}
+
+function syncArchiveInputs() {
+  var on = S.win === 'archive';
+  $('#arch-from').hidden = !on;
+  $('#arch-to').hidden = !on;
+  $('#q').placeholder = on ? 'Search the whole archive  ( / )' : 'Search titles, summaries, outlets  ( / )';
+}
+
 function renderFeed(listToo) {
+  if (S.win === 'archive') {
+    // The poller calls renderFeed(false) when new live items arrive; the archive list does not depend on them.
+    if (listToo !== false) renderArchive();
+    return;
+  }
   var r = compute();
   var regs = ['All'].concat(regionsPresent());
   var chips = '';
@@ -439,7 +536,10 @@ function wireEvents() {
     if (t.closest('[data-clearsrc]')) { S.src = ''; S.shown = PAGE; renderFeed(); return; }
     var src = t.closest('#feed [data-src]');
     if (src) { S.src = src.dataset.src; S.shown = PAGE; renderFeed(); window.scrollTo(0, 0); return; }
-    if (t.closest('#more')) { S.shown += PAGE; renderFeed(); return; }
+    if (t.closest('#more')) {
+      if (S.win === 'archive') { loadArchive(true); renderArchive(); return; }
+      S.shown += PAGE; renderFeed(); return;
+    }
     if (t.closest('#banner')) { S.cutoff = S.maxSeen; S.shown = PAGE; renderFeed(); window.scrollTo(0, 0); return; }
     var star = t.closest('[data-star]');
     if (star) { toggleSave(star.dataset.star, star); return; }
@@ -455,7 +555,13 @@ function wireEvents() {
 
   document.addEventListener('change', async function (e) {
     var t = e.target;
-    if (t.id === 'win') { S.win = +t.value; setState({ win: S.win }); pref.set('win', S.win); S.shown = PAGE; renderFeed(); }
+    if (t.id === 'win') {
+      S.win = t.value === 'archive' ? 'archive' : +t.value;
+      setState({ win: S.win }); pref.set('win', S.win); S.shown = PAGE;
+      syncArchiveInputs(); renderFeed();
+    }
+    else if (t.id === 'arch-from') { S.archFrom = t.value; renderFeed(); }
+    else if (t.id === 'arch-to') { S.archTo = t.value; renderFeed(); }
     else if (t.id === 'kind') { S.kind = t.value; setState({ kind: S.kind }); pref.set('kind', S.kind); S.shown = PAGE; renderFeed(); }
     else if (t.id === 'hidesports') { S.hideSports = t.checked; setState({ hideSports: S.hideSports }); pref.set('hideSports', S.hideSports); S.shown = PAGE; renderFeed(); }
     else if (t.id === 'hidestate') { S.hideState = t.checked; setState({ hideState: S.hideState }); pref.set('hideState', S.hideState); S.shown = PAGE; renderFeed(); }
@@ -477,7 +583,7 @@ function wireEvents() {
     var t = e.target;
     if (t.id === 'q') {
       clearTimeout(qTimer);
-      qTimer = setTimeout(function () { S.q = t.value; setState({ q: S.q }); S.shown = PAGE; renderFeed(); }, 150);
+      qTimer = setTimeout(function () { S.q = t.value; setState({ q: S.q }); S.shown = PAGE; renderFeed(); }, S.win === 'archive' ? 400 : 150);
     } else if (t.dataset && t.dataset.note) {
       var id = t.dataset.note;
       clearTimeout(noteTimers[id]);
@@ -507,6 +613,7 @@ function wireEvents() {
 
 export function initReader() {
   $('#win').value = String(S.win);
+  syncArchiveInputs();
   $('#kind').value = S.kind;
   $('#hidestate').checked = S.hideState;
   $('#hidesports').checked = S.hideSports;

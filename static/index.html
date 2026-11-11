@@ -163,7 +163,10 @@ h1, h2, h3, .brand, .spine-section-head {
           <option value="6">Last 6 h</option>
           <option value="24">Last 24 h</option>
           <option value="72">Last 3 days</option>
+          <option value="archive">Archive (search)</option>
         </select>
+        <input class="btn" id="arch-from" type="date" title="From this day" aria-label="From date" hidden>
+        <input class="btn" id="arch-to" type="date" title="Up to this day" aria-label="To date" hidden>
         <select class="btn" id="kind">
           <option value="all">News + analysis</option>
           <option value="news">News only</option>

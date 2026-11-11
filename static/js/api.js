@@ -67,3 +67,13 @@ export function fetchExportMd(onlyUndigested) {
     return r.text();
   });
 }
+
+export function fetchSearch(params) {
+  var parts = [];
+  for (var k in params) {
+    if (!Object.prototype.hasOwnProperty.call(params, k)) continue;
+    if (params[k] === '' || params[k] === null || params[k] === undefined) continue;
+    parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(params[k]));
+  }
+  return getJSON('/api/search?' + parts.join('&'));
+}
