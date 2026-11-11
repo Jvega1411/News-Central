@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import socket
 import sys
@@ -7,6 +8,7 @@ import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 
 from .api import App, Handler, Server
+from .backup import run_backup
 from .config import CONFIG_FILE, ConfigError, WORKERS, load_config, paths
 from .feeds import fetch_source
 from .fetcher import Fetcher
@@ -86,6 +88,7 @@ def main():
     ap.add_argument("--config", default=CONFIG_FILE, help="path to config.json")
     ap.add_argument("--open", action="store_true", help="open the reader in the browser after starting")
     ap.add_argument("--check", action="store_true", help="test every source once, print a report and exit")
+    ap.add_argument("--backup-now", action="store_true", help="run the incremental backup once and exit")
     ap.add_argument("--check-sources", action="store_true", help="validate source data model and exit")
     args = ap.parse_args()
     if args.check:
@@ -103,6 +106,13 @@ def main():
         print(e)
         return 2
     p = paths(cfg)
+    if args.backup_now:
+        if not p["backup"]:
+            print("backup_dir is not set in config.json")
+            return 2
+        summary = run_backup(p["db"], p["backup"])
+        print(json.dumps(summary, indent=2))
+        return 0
     if p["log"]:
         setup_log(p["log"])
     lan = cfg["listen"] != "127.0.0.1"
@@ -117,7 +127,7 @@ def main():
     # Open the database only once the port is ours, so a second copy never migrates
     # or writes to the database the running copy is using.
     store = Store(p["db"])
-    fetcher = Fetcher(store, cfg["refresh_minutes"] * 60, p["status"])
+    fetcher = Fetcher(store, cfg["refresh_minutes"] * 60, p["status"], p["backup"])
     httpd.app = App(store, fetcher, cfg)
     fetcher.start()
     print("News Central is running at", url)

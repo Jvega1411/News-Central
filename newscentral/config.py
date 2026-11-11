@@ -31,6 +31,7 @@ DEFAULTS = {
     "refresh_minutes": 15,
     "keep_awake": False,
     "log_file": None,
+    "backup_dir": None,
 }
 
 
@@ -52,7 +53,7 @@ def _check(key, value):
         ok = isinstance(value, list) and bool(value) and all(isinstance(x, str) for x in value)
     elif key == "keep_awake":
         ok = isinstance(value, bool)
-    elif key == "log_file":
+    elif key in ("log_file", "backup_dir"):
         ok = value is None or (isinstance(value, str) and bool(value))
     else:
         raise ConfigError("config: unknown key %r" % key)
@@ -91,4 +92,5 @@ def paths(cfg):
         "db": os.path.join(data_dir, "news.db"),
         "status": os.path.join(data_dir, "sources_status.json"),
         "log": resolve(cfg["log_file"]) if cfg.get("log_file") else None,
+        "backup": resolve(cfg["backup_dir"]) if cfg.get("backup_dir") else None,
     }

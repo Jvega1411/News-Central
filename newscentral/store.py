@@ -129,6 +129,7 @@ def search_terms(q):
 class Store:
     def __init__(self, path, fts=True):
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        self.path = path
         self.lock = threading.Lock()
         self.fts = False
         self.db = sqlite3.connect(path, check_same_thread=False)
