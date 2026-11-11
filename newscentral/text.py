@@ -1,3 +1,4 @@
+import codecs
 import html
 import re
 import unicodedata
@@ -56,13 +57,42 @@ def normalize(value, limit=None):
     return canonical(strip_markup(value), limit)
 
 
-def decode_bytes(data):
-    m = re.search(rb'encoding=["\']([A-Za-z0-9_.\-]+)["\']', data[:300])
-    encodings = [m.group(1).decode("ascii", "ignore")] if m else []
-    encodings += ["utf-8", "cp1252", "latin-1"]
-    for enc in encodings:
+XML_ENCODING_RE = re.compile(rb'encoding=["\']([A-Za-z0-9_.\-]+)["\']')
+CHARSET_RE = re.compile(r"charset\s*=\s*[\"']?([A-Za-z0-9_.\-]+)", re.I)
+LATIN_FALLBACKS = ("cp1252", "latin-1")
+_BOMS = ((codecs.BOM_UTF8, "utf-8-sig"), (codecs.BOM_UTF32_LE, "utf-32"), (codecs.BOM_UTF32_BE, "utf-32"),
+         (codecs.BOM_UTF16_LE, "utf-16"), (codecs.BOM_UTF16_BE, "utf-16"))
+
+
+class UndecodableFeed(ValueError):
+    pass
+
+
+def charset_from_content_type(value):
+    m = CHARSET_RE.search(value or "")
+    return m.group(1) if m else None
+
+
+def decode_bytes(data, http_charset=None, latin_fallback=True):
+    """Order: byte-order mark, XML declaration, UTF-8, HTTP charset, then (Latin-script sources only)
+    cp1252 and latin-1. UTF-8 goes before the HTTP charset because servers often announce
+    ISO-8859-1 for feeds that are really UTF-8, and latin-1 decodes anything without error."""
+    candidates = []
+    for bom, enc in _BOMS:
+        if data.startswith(bom):
+            candidates.append(enc)
+            break
+    m = XML_ENCODING_RE.search(data[:300])
+    if m:
+        candidates.append(m.group(1).decode("ascii", "ignore"))
+    candidates.append("utf-8")
+    if http_charset:
+        candidates.append(http_charset)
+    if latin_fallback:
+        candidates.extend(LATIN_FALLBACKS)
+    for enc in candidates:
         try:
             return data.decode(enc)
         except (LookupError, UnicodeDecodeError):
             continue
-    return data.decode("utf-8", "replace")
+    raise UndecodableFeed("undecodable feed (no usable charset)")

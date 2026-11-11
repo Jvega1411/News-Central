@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Fixture</title>
+<item><title>First &amp; foremost</title><link>https://example.com/one?utm_source=rss&amp;id=1</link>
+<description>&lt;p&gt;Summary &lt;b&gt;one&lt;/b&gt;&lt;/p&gt;</description>
+<pubDate>Tue, 10 Nov 2026 08:00:00 GMT</pubDate></item>
+<item><title>Second</title><link>https://example.com/two</link></item>
+<item><title>No link</title></item>
+<item><title>Bad scheme</title><link>javascript:alert(1)</link></item>
+</channel></rss>

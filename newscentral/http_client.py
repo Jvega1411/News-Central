@@ -9,6 +9,7 @@ import urllib.request
 import zlib
 
 from .config import FETCH_TIMEOUT, MAX_BYTES
+from .text import UndecodableFeed, charset_from_content_type
 
 USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
               "(KHTML, like Gecko) Version/17.0 Safari/605.1.15 NewsCentral/1.0")
@@ -72,6 +73,7 @@ def http_get(url, etag=None, lastmod=None, accept=None, ua=None):
             final_url = resp.geturl()
             new_etag = resp.headers.get("ETag")
             new_lastmod = resp.headers.get("Last-Modified")
+            charset = charset_from_content_type(resp.headers.get("Content-Type"))
     except urllib.error.HTTPError as e:
         if e.code == 304:
             raise NotModified()
@@ -83,7 +85,7 @@ def http_get(url, etag=None, lastmod=None, accept=None, ua=None):
             data = zlib.decompress(data)
         except zlib.error:
             data = zlib.decompress(data, -zlib.MAX_WBITS)
-    return data, final_url, new_etag, new_lastmod
+    return data, final_url, new_etag, new_lastmod, charset
 
 
 def curl_get(url, ua, accept=None):
@@ -92,29 +94,38 @@ def curl_get(url, ua, accept=None):
         raise RuntimeError("curl not available")
     cmd = [CURL, "-sS", "-L", "--compressed", "-m", str(FETCH_TIMEOUT), "-A", ua,
            "-H", "Accept: " + (accept or FEED_ACCEPT), "-H", "Accept-Language: en, es;q=0.9",
-           "-w", "\n%{http_code} %{url_effective}", url]
+           "-w", "\n%{http_code}\t%{content_type}\t%{url_effective}", url]
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=FETCH_TIMEOUT + 5)
     if proc.returncode != 0:
         raise RuntimeError("curl: " + proc.stderr.decode("utf-8", "ignore").strip()[:100])
     body, _, tail = proc.stdout.rpartition(b"\n")
-    code, _, final_url = tail.decode("utf-8", "ignore").partition(" ")
+    parts = tail.decode("utf-8", "ignore").split("	", 2)
+    code = parts[0]
+    ctype = parts[1] if len(parts) > 1 else ""
+    final_url = parts[2] if len(parts) > 2 else ""
     if code != "200":
         raise urllib.error.HTTPError(url, int(code or 0), "curl", None, None)
-    return body, final_url or url, None, None
+    return body, final_url or url, None, None, charset_from_content_type(ctype)
 
 
 def get_with_fallback(url, accept=None, etag=None, lastmod=None, check=None):
     """GET url; if the site blocks us (403 etc. or a bot-check page), retry with other clients.
-    check(data, final_url) parses the body and raises ValueError("...web page...") on a bot page."""
+    check(data, final_url, charset) parses the body and raises ValueError("...web page...") on a bot page.
+    Returns (data or check result, final_url, etag, lastmod, charset)."""
+    def finish(result):
+        data, final_url, et, lm, charset = result
+        return (check(data, final_url, charset) if check else data), final_url, et, lm, charset
+
     try:
-        data, final_url, et, lm = http_get(url, etag, lastmod, accept)
-        return (check(data, final_url) if check else data), final_url, et, lm
+        return finish(http_get(url, etag, lastmod, accept))
     except NotModified:
         raise
     except urllib.error.HTTPError as e:
         if e.code not in BLOCK_CODES:
             raise
         first = e
+    except UndecodableFeed:
+        raise
     except ValueError as e:
         if "web page" not in str(e):
             raise
@@ -124,14 +135,15 @@ def get_with_fallback(url, accept=None, etag=None, lastmod=None, check=None):
                 lambda: curl_get(url, ALT_USER_AGENT, accept))
     for attempt in attempts:
         try:
-            data, final_url, et, lm = attempt()
-            return (check(data, final_url) if check else data), final_url, et, lm
+            return finish(attempt())
         except Exception:
             continue
     raise first
 
 
 def short_error(exc):
+    if isinstance(exc, UndecodableFeed):
+        return str(exc)
     if isinstance(exc, urllib.error.HTTPError):
         return "HTTP %s" % exc.code
     if isinstance(exc, urllib.error.URLError):

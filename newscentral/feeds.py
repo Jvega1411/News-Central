@@ -8,7 +8,8 @@ from html.entities import name2codepoint
 
 from .config import MAX_ITEMS_PER_FEED, SUMMARY_CHARS
 from .http_client import NotModified, get_with_fallback, short_error
-from .text import decode_bytes, normalize
+from .sources import latin_script
+from .text import UndecodableFeed, decode_bytes, normalize
 
 
 XML_ENTITIES = {"amp", "lt", "gt", "quot", "apos"}
@@ -19,8 +20,8 @@ HREF_RE = re.compile(r"""href\s*=\s*["']([^"']+)["']""", re.I)
 TRACKING_PARAMS = ("utm_", "fbclid", "gclid", "ocid", "cmpid", "mc_cid", "mc_eid")
 
 
-def repair_xml(data):
-    text = decode_bytes(data).lstrip("﻿ \t\r\n")
+def repair_xml(data, http_charset=None, latin_fallback=True):
+    text = decode_bytes(data, http_charset, latin_fallback).lstrip("﻿ \t\r\n")
     text = re.sub(r"^<\?xml[^>]*\?>", "", text)
     text = CTRL_RE.sub("", text)
 
@@ -163,19 +164,23 @@ def regex_items(text, base):
     return out
 
 
-def parse_feed(data, base):
+def parse_feed(data, base, http_charset=None, latin_fallback=True):
     head = data[:1024].lstrip().lower()
     if head.startswith(b"<!doctype html") or head.startswith(b"<html"):
         raise ValueError("got a web page, not a feed")
     root = None
-    for attempt in (lambda: data, lambda: repair_xml(data)):
+    for attempt in (lambda: data, lambda: repair_xml(data, http_charset, latin_fallback)):
         try:
             root = ET.fromstring(attempt())
             break
-        except ET.ParseError:
+        except UndecodableFeed:
+            raise
+        except (ET.ParseError, ValueError):
+            # expat raises ValueError ("multi-byte encodings are not supported") for GBK, Shift_JIS
+            # and similar; the second attempt re-encodes to UTF-8
             continue
     if root is None:
-        items = regex_items(decode_bytes(data), base)
+        items = regex_items(decode_bytes(data, http_charset, latin_fallback), base)
         if not items:
             raise ValueError("unreadable feed")
         return items
@@ -189,8 +194,8 @@ def parse_feed(data, base):
 
 
 def discover_feeds(site):
-    data, final_url, _, _ = get_with_fallback(site, accept="text/html,application/xhtml+xml,*/*;q=0.8")
-    text = decode_bytes(data[:800000])
+    data, final_url, _, _, charset = get_with_fallback(site, accept="text/html,application/xhtml+xml,*/*;q=0.8")
+    text = decode_bytes(data[:800000], charset)
     found = []
     for tag in LINK_TAG_RE.findall(text):
         low = tag.lower()
@@ -225,12 +230,17 @@ def fetch_source(src, state):
         if url and url not in candidates:
             candidates.append(url)
     errors = []
+    latin = latin_script(src.get("lang"))
+
+    def check(data, base, charset):
+        return parse_feed(data, base, charset, latin)
+
     for url in candidates:
         same = url == used
         try:
-            items, _, etag, lastmod = get_with_fallback(
+            items, _, etag, lastmod, _ = get_with_fallback(
                 url, etag=state.get("etag") if same else None,
-                lastmod=state.get("lastmod") if same else None, check=parse_feed)
+                lastmod=state.get("lastmod") if same else None, check=check)
             if items:
                 return {"feed": url, "items": items[:MAX_ITEMS_PER_FEED],
                         "status": "ok" if url in configured else "discovered",
@@ -251,7 +261,7 @@ def fetch_source(src, state):
                 if url in candidates:
                     continue
                 try:
-                    items, _, etag, lastmod = get_with_fallback(url, check=parse_feed)
+                    items, _, etag, lastmod, _ = get_with_fallback(url, check=check)
                 except Exception:
                     continue
                 if items:
