@@ -3,9 +3,15 @@
 import os
 
 from .fake import FakeEngine
+from .m2m100 import M2M100Engine
+from .nllb import NllbEngine
+from .opus_mt import OpusMtEngine
 
 ENGINES = {
     "fake": FakeEngine,
+    "nllb-600m": NllbEngine,
+    "m2m100-418m": M2M100Engine,
+    "opus-mt": OpusMtEngine,
 }
 
 

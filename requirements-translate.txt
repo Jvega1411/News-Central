@@ -1,0 +1,8 @@
+# Optional: local translation engines (spec 2a). Needs Python 3.10 or newer.
+#   py -m pip install -r requirements-translate.txt
+# Without these packages the translate job reports "unavailable" and the reader shows originals.
+# Wheels: win_amd64, macOS x86_64/arm64 and manylinux aarch64 (Raspberry Pi OS 64-bit) on PyPI.
+ctranslate2>=4.5,<5
+sentencepiece>=0.2.0
+# Only for "py tools/get_models.py <engine> --convert" (large, not needed for the default downloads):
+#   py -m pip install transformers torch
