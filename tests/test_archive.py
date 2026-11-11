@@ -64,6 +64,12 @@ class TestNoPrune(StoreCase):
 
 
 class TestLangAndSnapshot(StoreCase):
+    def test_add_items_counts_only_new_rows(self):
+        s = self.open()
+        two = [{"title": "a", "link": "https://example.com/1"}, {"title": "b", "link": "https://example.com/2"}]
+        self.assertEqual(s.add_items("elpais", two, "es"), 2)        # FTS trigger rows are not counted
+        self.assertEqual(s.add_items("elpais", two[:1], "es"), 0)    # duplicates are ignored
+
     def test_new_items_carry_lang(self):
         s = self.open()
         s.add_items("ahram", [{"title": "T", "link": "https://example.com/a"}], "ar")

@@ -197,12 +197,14 @@ class Store:
                  it["link"], it.get("summary", ""), it.get("published"), now, lang,
                  json.dumps(it["tags"], ensure_ascii=False) if it.get("tags") else None) for it in items]
         with self.lock:
-            before = self.db.total_changes
-            self.db.executemany(
+            # rowcount counts only rows inserted into items; total_changes would also count
+            # the rows the FTS triggers write into the index.
+            cur = self.db.executemany(
                 "INSERT OR IGNORE INTO items (id, source_id, title, link, summary, published, first_seen, lang, feed_tags) "
                 "VALUES (?,?,?,?,?,?,?,?,?)", rows)
+            added = max(cur.rowcount, 0)
             self.db.commit()
-            return self.db.total_changes - before
+            return added
 
     def set_state(self, source_id, result):
         now = time.time()
