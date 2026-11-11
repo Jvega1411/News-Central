@@ -1,6 +1,6 @@
 # Translation (spec 2a): design
 
-Date: 2026-11-11. Status: approved in brainstorming, pending written review.
+Date: 2026-11-11. Status: implemented 2026-11-11; engine choice pending the benchmark.
 
 ## Context
 
@@ -66,13 +66,18 @@ building a translation model is not.
 - A job is a class with `name`, `available()` (dependencies and model present),
   `pending(store, limit)` (the next batch of work) and `run(batch)` (returns
   results). The first job is `translate`. 2b and 2c add their own jobs.
+  `save(store, batch, results)` writes the results in one transaction and
+  returns the number done; `available()` sets `job.reason`.
 - Supervision: `cli.main` starts the worker as a child process with
   `subprocess.Popen([sys.executable, "-m", "newscentral.worker", "--config", <path>])`
   after the server has bound its port. A supervisor thread restarts it after a
   crash, with a delay that doubles from 10 seconds to a maximum of 10 minutes,
   and resets after the worker has run for 10 minutes. On server shutdown the
   worker is terminated. `--no-worker` disables it; `config.json` key
-  `worker` (default `true`) does the same.
+  `worker` (default `true`) does the same. The worker exits with code 3 on a
+  schema mismatch; the supervisor does not restart it. The child runs with the
+  repository as working directory and writes to the server's log file when
+  there is one.
 - Status: the worker writes a heartbeat row (`worker_status`: job, state,
   last batch time, items done in the last hour, last error) every batch.
   `/api/status` and the Sources view show it.
@@ -100,21 +105,27 @@ building a translation model is not.
 - `newscentral/translate/` package: `base.py` (the interface), one module per
   engine, `registry.py` (engine names to classes).
 - Interface: `Engine.translate(texts, src, tgt) -> list of str`, plus `name`,
-  `version` and `supports(src, tgt)`. Engines receive normalized text and
-  return normalized text (`text.normalize`).
+  `version` and `supports(src, tgt)`. Engines receive canonical text and return
+  plain text; the job applies `text.canonical` (not `normalize`, whose tag
+  stripper would delete text such as `<2%`).
 - Candidates for the benchmark:
   - **NLLB-200 distilled 600M** on CTranslate2 (int8). One model for every
     language. Licence CC-BY-NC 4.0: acceptable for this personal,
-    non-commercial use; weights are downloaded, never committed.
-  - **M2M100 418M** on CTranslate2 (int8). MIT licence.
+    non-commercial use; weights are downloaded, never committed. Downloaded
+    from `JustFrederik/nllb-200-distilled-600M-ct2-int8`.
+  - **M2M100 418M** on CTranslate2 (int8). MIT licence. Downloaded as float16
+    (`michaelfeil/ct2fast-m2m100_418M`), run as int8.
   - **Opus-MT** (Marian) on CTranslate2: a direct model per pair into Spanish
     where one exists, otherwise source to English then English to Spanish.
+    Until `tools/get_models.py opus-mt --convert` builds the direct models
+    (needs transformers and torch), most languages pivot through English.
     CC-BY 4.0.
 - Dependencies: CTranslate2 and sentencepiece, optional, listed in
-  `requirements-translate.txt`. Binary wheels exist for Python 3.14 on Windows
-  (checked 2026-11-11). ARM64 Linux wheels for the Pi are assumed and must be
-  verified before the move. Without the dependencies the job reports
-  "unavailable" and nothing else changes.
+  `requirements-translate.txt`. Wheels for `cp314` `win_amd64` and
+  `manylinux_2_28_aarch64` are published on PyPI (checked 2026-11-11;
+  `ctranslate2` 4.9.0, `sentencepiece` 0.2.3). They need Python 3.10+; the core
+  stays 3.8. ARM64 wheels still have to be installed and run on the Pi. Without
+  the dependencies the job reports "unavailable" and nothing else changes.
 - Models: `tools/get_models.py <engine>` downloads and converts a model into
   `data/models/<engine>/`. Models never enter the repository.
 - Config: `translate_engine` maps source languages to engines, for example
@@ -137,9 +148,12 @@ worker_status(job PRIMARY KEY, state, last_batch, done_last_hour, last_error, up
 - The original in `items` is never changed.
 - Retranslating: deleting the rows of one engine puts those items back in the
   queue. `tools/retranslate.py --engine <name> [--lang <src>]` does that.
+- Index `items_lang_seen ON items(lang, first_seen)`.
 - Search: a second FTS5 table `translations_fts` over `translations.text`,
   managed by `Store.ensure_fts()` like `items_fts`. `/api/search` matches
-  either the original or the translation; results are not duplicated.
+  either the original or the translation; results are not duplicated. Every
+  term must be in the original or in one translated field; ranking takes the
+  best `bm25` of both indexes.
 
 ## 4. Queue and priority
 
@@ -151,8 +165,8 @@ worker_status(job PRIMARY KEY, state, last_batch, done_last_hour, last_error, up
 - An item that fails is recorded in `translation_failures`; after three
   failures it is skipped until `tools/retranslate.py` clears it.
 - Volume and backlog: the Collection block in the Sources view gains a line
-  with pending titles, pending summaries and translations done in the last
-  24 hours.
+  with pending titles, pending summaries, translations done in the last
+  24 hours, and items given up after three failures.
 
 ## 5. Benchmark
 
@@ -189,6 +203,9 @@ worker_status(job PRIMARY KEY, state, last_batch, done_last_hour, last_error, up
   translation.
 - The Markdown export for Claude includes both the original and the
   translation, marked.
+- `/api/items` also returns `tr_seen` and, with `tr_since`, `translated`
+  (translations created since then for items in the live window), so a page
+  that is already open receives translations that finish later.
 
 ## 7. Error handling
 
@@ -249,3 +266,5 @@ Standard-library `unittest`; no model in the tests.
 7. Benchmark tool and the `/bench/translate` review page.
 8. Run the benchmark (after three days of batch 1b), judge, choose, configure.
 9. `CLAUDE.md` and `ROADMAP.md` updates.
+
+Step 9 shipped before step 8, which waits for three days of batch 1b.

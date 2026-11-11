@@ -30,6 +30,8 @@ Goal: the best news tool for this specific use (global coverage for CMUDE prep, 
 
 ## Phase 3: Intelligence
 
+- [x] Translation into Spanish of titles and summaries in unread languages (spec 2a): worker process, local engines, queue, search over translations, reader display. The engines are not yet installed or downloaded, so only the fake engine has run; the benchmark (Task 16) is pending.
+- [ ] Choose the translation engine per language from the benchmark (after three days of batch 1b), on this machine and again on the Pi
 - [ ] Benchmark a small multilingual embedding model on the Mac and on the Pi before choosing one
 - [ ] Topic classifier from embeddings
 - [ ] Cross-language story clustering: coverage by region and regional blind spots (hypothesis to test on real data: short multilingual headlines cluster well enough)
@@ -55,8 +57,10 @@ Interim host: the Windows MSI laptop, via `tools/windows/install.ps1`.
 - Animal Político: the site returned server errors (504) on both checks.
 - Sports & celebrity filter hid 4.7% of items in the first real snapshot (219 of 4,673). Outlets that don't put the section in the URL slip through, so the true share is unknown.
 - Windows: second-copy detection relies on `allow_reuse_address = False` there; not yet tested on Windows.
-- Chinese, Japanese and Korean text is not segmented by the search index; searching those languages matches whole runs only until translated text exists.
-- No database backup yet: the archive is one file on one laptop.
+- Chinese, Japanese and Korean originals are not segmented by the search index; a Spanish query finds them through their translation.
+- Translation needs Python 3.10+ and the optional CTranslate2 and sentencepiece packages. ARM64 wheels are published on PyPI but not yet installed or run on the Pi; the Pi's throughput (seconds per item) is unmeasured.
+- Opus-MT pivots through English for most languages unless `tools/get_models.py opus-mt --convert` builds the direct models (needs transformers and torch).
+- Backup: the daily backup runs only when `backup_dir` is set in `config.json` (null in `config.example.json`). Until that folder is synced to another machine, the archive is one file on one laptop.
 - Lid-closed temperature on the MSI and collection across unattended Windows Update reboots are unverified.
 - Candidates rejected in batch 1a for lack of a usable feed or because they block automated readers: European Commission press corner, European Court of Auditors, Congreso, Senado, Tribunal Constitucional, IMF news and blog, OECD, World Bank, ILO, UNCTAD, CNMV (empty feeds), Vozpópuli, El Economista México, The Economist, Bloomberg.
 - On the TVITEC network a firewall intercepts TLS to some outlets in Russia, China, South Korea, Iran, Indonesia and Vietnam (9 sources fail with a certificate error there). Check source health from another network before disabling one.

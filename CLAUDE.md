@@ -10,11 +10,12 @@ The plan lives in `ROADMAP.md`. Work phase by phase.
 python server.py --open      # Windows: py server.py --open   ·   macOS: ./NewsCentral.command
 python server.py --check     # fetch every enabled source once, print OK / FOUND / FAIL, exit
 python server.py --lan       # also listen on the local network (phone on the same Wi-Fi)
+python server.py --no-worker  # do not start the background worker (translation)
 python server.py --config other.json   # use another config file (default: config.json, optional)
 py tools/check_candidates.py file.json # fetch candidate sources and print a review table
 ```
 
-Reader at http://127.0.0.1:8787. Runtime data goes to `data/` (SQLite `news.db` with archive, saved items and notes; `sources_status.json` written after every fetch cycle). `data/` is gitignored and must never be committed: the repository is public.
+Reader at http://127.0.0.1:8787. Runtime data goes to `data/` (SQLite `news.db` with archive, saved items, notes and translations; `sources_status.json` written after every fetch cycle; `models/` with downloaded translation models; `bench/` with benchmark rounds). `data/` is gitignored and must never be committed: the repository is public. The database runs in WAL mode, so `news.db-wal` and `news.db-shm` sit next to it: a raw copy must include all three files with the server stopped, or use SQLite's backup API (`sqlite3 data/news.db ".backup backup.db"`). The project's own backup (`newscentral/backup.py`, `backup_dir` in `config.json`, `python server.py --backup-now`, restored with `tools/restore_backup.py`) writes daily compressed files of items and translations, plus saved items, sources and feed state, and is separate from copying the database file.
 
 Windows host: `tools/windows/install.ps1` (elevated) registers autostart at logon and sets AC power so the lid can stay closed; `uninstall.ps1` undoes both. `config.json` is per-machine and gitignored; `config.example.json` documents the keys.
 
@@ -42,12 +43,15 @@ Windows host: `tools/windows/install.ps1` (elevated) registers autostart at logo
   - `state_media: true` only for outlets run by a government ministry or department, a state news agency, or a ruling party (TASS, RIA, IRNA, Anadolu, China News Service, RTHK, Ukrinform, Antara). Public broadcasters with a statutory guarantee of independence are not marked (BBC, DW, RTVE, CBC, NHK, franceinfo, RTBF, 3Cat, TRT). Decided by the user on 2026-11-11.
 - `static/index.html` plus vanilla ES modules in `static/js/` (`state`, `api`, `reader`, `spine`, `map`, `mapzoom`, `main`): no build step, still no `??` or `?.` for older Safari. Region chips, time window, news/analysis, sports & celebrity filter (URL-section based), state-controlled toggle, search, saved view with notes and "Copy for Claude", sources health table.
 - `NewsCentral.command`: macOS double-click launcher.
+- Worker: `python -m newscentral.worker`, started by the server after it binds its port and migrates the database, restarted after a crash (10 s doubling to 10 min, reset after 10 min of running), stopped with the server. Exit code 3 means schema mismatch: not restarted. Jobs (`newscentral/jobs.py`) implement `available()`, `pending()`, `run()`, `save()`; the first is `translate`. Status in the `worker_status` table, shown in `/api/status` and the Sources view.
+- Translation (`newscentral/translate/`): items in languages outside `read_langs` get Spanish titles and summaries in `translations` (migration 6), titles first, newest first; three failures skip an item until `tools/retranslate.py` clears it. Engines `nllb-600m`, `m2m100-418m`, `opus-mt` on CTranslate2 (optional, `requirements-translate.txt`, Python 3.10+), chosen per source language by `translate_engine` in `config.json`; `fake` is for tests and development. Models: `py tools/get_models.py <engine>`; check one with `py -m newscentral.translate.selfcheck <engine>`. Benchmark: `py tools/bench_translate.py run|summarize`, review at `/bench/translate`.
+- API additions: `/api/items`, `/api/search` and `/api/saved` carry `tr: {title, summary, engine}`; `/api/items?tr_since=` returns `translated` and `tr_seen` so open pages receive late translations; `/api/stats` has `translation` counts; `/api/status` has `worker` and `worker_enabled`. The search index `translations_fts` is managed by `Store.ensure_fts()` with `items_fts`.
 
 ## Hard constraints
 
 - Core stays standard-library Python 3.8+. A new dependency needs a reason, must be optional, and must ship ARM64 Linux wheels.
 - Must run unchanged on macOS Intel (current host), Windows (dev laptop) and Raspberry Pi OS 64-bit (future host). Per-machine differences go through flags or a config file, never code edits.
-- One SQLite file is the whole state. Schema changes go through numbered migrations, each in one transaction. The FTS index is derived data and is managed by `Store.ensure_fts()`, not by a migration.
+- One SQLite file is the whole state (WAL mode). Schema changes go through numbered migrations, each in one transaction, run only by the server process; the worker and the tools open the file with `Store(path, migrate=False)` and refuse a different schema version. The FTS index is derived data and is managed by `Store.ensure_fts()`, not by a migration.
 - The Claude connector (MCP) talks to the HTTP API, never to `news.db` directly, so it keeps working after the move to the Pi.
 - Heavy processing (embeddings, clustering) runs as batch jobs that can run on any machine and store results in the database.
 - Times are stored as UTC epoch seconds and converted only in the UI.
