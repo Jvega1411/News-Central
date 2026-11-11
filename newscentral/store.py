@@ -552,3 +552,34 @@ class Store:
                 self.db.rollback()
                 raise
         return deleted, cleared
+
+    def translations_for(self, ids, lang=TARGET_LANG):
+        """{item_id: {"title", "summary", "engine"}} for the given ids that have any translation.
+        A missing field is "". The engine is the title's, or the summary's when only that exists."""
+        out = {}
+        ids = list(ids)
+        with self.lock:
+            for start in range(0, len(ids), 500):
+                chunk = ids[start:start + 500]
+                rows = self.db.execute(
+                    "SELECT item_id, field, text, engine FROM translations WHERE lang = ? AND item_id IN (%s)"
+                    % ",".join("?" * len(chunk)), [lang] + chunk).fetchall()
+                for r in rows:
+                    tr = out.setdefault(r["item_id"], {"title": "", "summary": "", "engine": ""})
+                    tr[r["field"]] = r["text"]
+                    if r["field"] == "title" or not tr["engine"]:
+                        tr["engine"] = r["engine"]
+        return out
+
+    def max_translation_created(self, lang=TARGET_LANG):
+        with self.lock:
+            value = self.db.execute("SELECT MAX(created) FROM translations WHERE lang = ?", (lang,)).fetchone()[0]
+        return value or 0
+
+    def translated_since(self, after, lang, min_first_seen):
+        """Translations created after `after` for items first seen from min_first_seen on."""
+        with self.lock:
+            ids = [r[0] for r in self.db.execute(
+                "SELECT DISTINCT t.item_id FROM translations t JOIN items i ON i.id = t.item_id "
+                "WHERE t.lang = ? AND t.created > ? AND i.first_seen >= ?", (lang, after, min_first_seen))]
+        return self.translations_for(ids, lang)     # outside the lock: it takes the lock itself

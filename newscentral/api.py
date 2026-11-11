@@ -25,6 +25,16 @@ class App:
         self.live_row_limit = LIVE_ROW_LIMIT
 
 
+def attach_translations(app, items, key="id"):
+    """Add tr: {title, summary, engine} to the items that have a translation. Returns items."""
+    trs = app.store.translations_for([it[key] for it in items], TARGET_LANG)
+    for it in items:
+        tr = trs.get(it[key])
+        if tr:
+            it["tr"] = tr
+    return items
+
+
 def status_payload(app):
     f = app.fetcher
     return {"running": f.running, "updated": f.last_cycle, "sources_error": f.sources_error,
@@ -60,6 +70,7 @@ def items_payload(app, since):
                     "title": r["title"], "link": r["link"], "summary": r["summary"] or "",
                     "lang": r["lang"] or known[r["source_id"]].get("lang", "")})
     out.sort(key=lambda x: x["t"], reverse=True)
+    attach_translations(app, out)
     return out, truncated
 
 
@@ -91,6 +102,7 @@ def search_payload(app, q):
               "lang": r["lang"] or "", "source_name": r["source_name"] or r["source_id"],
               "region": r["region"] or "", "country_iso": r["country_iso"], "scope": r["scope"],
               "exile": bool(r["exile"]), "covers": r["covers"], "kind": r["kind"] or "news"} for r in rows]
+    attach_translations(app, items)
     return {"items": items, "total": total, "engine": engine, "limit": limit, "offset": offset}
 
 
@@ -139,19 +151,29 @@ def aggregate_geo(sources, items, countries, since):
 
 
 def export_markdown(app, only_undigested):
-    rows = app.store.saved()
+    rows = attach_translations(app, app.store.saved())
     if only_undigested:
         rows = [r for r in rows if not r["digested"]]
     lines = ["# Saved news for digestion", "",
-             "Exported %s · %d items" % (time.strftime("%Y-%m-%d %H:%M"), len(rows)), ""]
+             "Exported %s \u00b7 %d items" % (time.strftime("%Y-%m-%d %H:%M"), len(rows)), ""]
     for r in rows:
-        lines.append("## " + (r["title"] or ""))
+        tr = r.get("tr") or {}
+        lang = r["lang"] or "?"
+        lines.append("## " + (tr.get("title") or r["title"] or ""))
+        if tr.get("title"):
+            lines.append("- Original title (%s): %s" % (lang, r["title"] or ""))
+            lines.append("- Title: machine translation from %s, %s" % (lang, tr.get("engine") or "?"))
         where = ", ".join(x for x in (r["country"], r["lang"]) if x)
-        lines.append("- Source: %s%s · %s" % (r["source_name"], " (%s)" % where if where else "", r["region"]))
+        lines.append("- Source: %s%s \u00b7 %s" % (r["source_name"], " (%s)" % where if where else "", r["region"]))
         if r["published"]:
             lines.append("- Published: " + time.strftime("%Y-%m-%d %H:%M", time.localtime(r["published"])))
         lines.append("- Link: " + (r["link"] or ""))
-        if r["summary"]:
+        if tr.get("summary"):
+            lines.append("- Summary (machine translation from %s, %s): %s" % (lang, tr.get("engine") or "?",
+                                                                            tr["summary"]))
+            if r["summary"]:
+                lines.append("- Original summary (%s): %s" % (lang, r["summary"]))
+        elif r["summary"]:
             lines.append("- Summary: " + r["summary"])
         if r["note"]:
             lines.append("- My note: " + " ".join(r["note"].split()))
@@ -213,8 +235,18 @@ class Handler(BaseHTTPRequestHandler):
                     since = float((q.get("since") or ["0"])[0] or 0)
                 except ValueError:
                     since = 0.0
+                try:
+                    tr_since = float((q.get("tr_since") or ["0"])[0] or 0)
+                except ValueError:
+                    tr_since = 0.0
                 payload = status_payload(app)
+                # Read the newest translation time before the items, so nothing written in between
+                # is missed by the next poll.
+                payload["tr_seen"] = app.store.max_translation_created(TARGET_LANG)
                 payload["items"], payload["truncated"] = items_payload(app, since)
+                if tr_since > 0:
+                    payload["translated"] = app.store.translated_since(
+                        tr_since, TARGET_LANG, time.time() - LIVE_WINDOW_HOURS * 3600 - 3600)
                 self._json(payload)
             elif path == "/api/geo":
                 try:
@@ -227,7 +259,7 @@ class Handler(BaseHTTPRequestHandler):
                 payload["sources"] = source_payload(app.fetcher.sources, app.store)
                 self._json(payload)
             elif path == "/api/saved":
-                self._json({"saved": app.store.saved()})
+                self._json({"saved": attach_translations(app, app.store.saved())})
             elif path == "/api/export.md":
                 only = (q.get("only") or [""])[0] == "undigested"
                 extra = {}
