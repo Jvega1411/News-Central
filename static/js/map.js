@@ -1,13 +1,77 @@
 'use strict';
-// Dark Equal Earth choropleth map.
-// Fetches /world.svg + /api/geo, paints countries by item count,
-// wires hover tooltip and click-to-filter via shared state.
+// Light Equal Earth choropleth map.
+// Fetches /world.svg + /api/geo, paints countries by item count or by RSF
+// press-freedom score (toggle), wires hover tooltip and click-to-filter via
+// shared state.
 
 import { fetchGeo } from './api.js';
 import { setState, onState, state } from './state.js';
 
 var RAMP = ['#cfe1f2', '#93c0e0', '#5699cd', '#2b6cb0', '#13375e'];
 var NO_DATA = '#d9dee4';
+var PF_YEAR = 2026;
+
+// RSF's five published categories, highest freedom first.
+var PF_CATS = [
+  { min: 85, label: 'good situation', range: '85–100', color: '#2f8f5b' },
+  { min: 70, label: 'satisfactory', range: '70–85', color: '#6fae7a' },
+  { min: 55, label: 'problematic', range: '55–70', color: '#e9d16b' },
+  { min: 40, label: 'difficult', range: '40–55', color: '#d98f2b' },
+  { min: -Infinity, label: 'very serious', range: '0–40', color: '#c0392b' }
+];
+
+// Layer mode is local to this module: 'coverage' or 'press'.
+var _mode = 'coverage';
+var _geo = null;
+var _legendEl = null;
+var _toggleEl = null;
+
+// --- press-freedom helpers (pure) ---
+
+function pfCategory(score) {
+  if (typeof score !== 'number' || isNaN(score)) return null;
+  for (var i = 0; i < PF_CATS.length; i++) {
+    if (score >= PF_CATS[i].min) return PF_CATS[i];
+  }
+  return null;
+}
+
+function pfColor(score) {
+  var cat = pfCategory(score);
+  return cat ? cat.color : NO_DATA;
+}
+
+function hasPressData(geo) {
+  var pf = geo && geo.press_freedom;
+  return !!pf && typeof pf === 'object' && Object.keys(pf).length > 0;
+}
+
+function tipText(mode, name, d, score) {
+  var counts;
+  if (d && d.items > 0) {
+    counts = d.items + ' items, ' + d.sources + ' sources';
+  } else {
+    counts = 'no sources';
+  }
+  if (mode !== 'press') return name + ' — ' + counts;
+  var cat = pfCategory(score);
+  var head = cat ? name + ' — ' + score.toFixed(2) + ' ' + cat.label : name + ' — no score';
+  if (d && d.items > 0) return head + ' — ' + counts;
+  return head;
+}
+
+// Country name for ISO codes the geo payload does not carry (countries with a
+// score but no sources). Falls back to the code where Intl.DisplayNames is missing.
+var _regionNames = null;
+
+function regionName(iso) {
+  try {
+    if (!_regionNames) _regionNames = new Intl.DisplayNames(['en'], { type: 'region' });
+    return _regionNames.of(iso) || iso;
+  } catch (e) {
+    return iso;
+  }
+}
 
 // --- colour helpers ---
 
@@ -49,6 +113,8 @@ function hideTip() {
 
 function paintMap(svgRoot, geo) {
   var countries = geo.countries || {};
+  var pf = geo.press_freedom || {};
+  var press = _mode === 'press';
   var isos = Object.keys(countries);
   var max = 0;
   for (var i = 0; i < isos.length; i++) {
@@ -61,11 +127,17 @@ function paintMap(svgRoot, geo) {
     var p = paths[pi];
     var iso = p.id.toUpperCase();
     var d = countries[iso];
-    if (d && d.items > 0) {
+    if (press) {
+      p.style.fill = pfColor(pf[iso]);
+    } else if (d && d.items > 0) {
       p.style.fill = pickColor(d.items, max);
-      p.classList.add('hit');
     } else {
       p.style.fill = NO_DATA;
+    }
+    // Clickability depends on items only, in both modes.
+    if (d && d.items > 0) {
+      p.classList.add('hit');
+    } else {
       p.classList.remove('hit');
     }
   }
@@ -75,24 +147,97 @@ function paintMap(svgRoot, geo) {
 // --- legend ---
 
 function buildLegend(container) {
-  var legend = document.createElement('div');
-  legend.className = 'map-legend';
+  _legendEl = document.createElement('div');
+  _legendEl.className = 'map-legend';
+  container.appendChild(_legendEl);
+  renderLegend();
+}
 
+function renderLegend() {
+  if (!_legendEl) return;
+  while (_legendEl.firstChild) _legendEl.removeChild(_legendEl.firstChild);
+  var i, swatch;
+
+  if (_mode === 'press') {
+    _legendEl.classList.add('pf');
+    for (i = PF_CATS.length - 1; i >= 0; i--) {
+      var cat = PF_CATS[i];
+      var item = document.createElement('span');
+      item.className = 'pf-item';
+      swatch = document.createElement('i');
+      swatch.style.background = cat.color;
+      item.appendChild(swatch);
+      var txt = document.createElement('span');
+      txt.textContent = cat.label + ' ' + cat.range;
+      item.appendChild(txt);
+      _legendEl.appendChild(item);
+    }
+    var src = document.createElement('span');
+    src.className = 'pf-src';
+    src.textContent = 'Source: RSF World Press Freedom Index ' + PF_YEAR;
+    _legendEl.appendChild(src);
+    return;
+  }
+
+  _legendEl.classList.remove('pf');
   var fewer = document.createElement('span');
   fewer.textContent = 'fewer';
-  legend.appendChild(fewer);
+  _legendEl.appendChild(fewer);
 
-  for (var i = 0; i < RAMP.length; i++) {
-    var swatch = document.createElement('i');
+  for (i = 0; i < RAMP.length; i++) {
+    swatch = document.createElement('i');
     swatch.style.background = RAMP[i];
-    legend.appendChild(swatch);
+    _legendEl.appendChild(swatch);
   }
 
   var more = document.createElement('span');
   more.textContent = 'more';
-  legend.appendChild(more);
+  _legendEl.appendChild(more);
+}
 
-  container.appendChild(legend);
+// --- layer toggle ---
+
+var LAYERS = [
+  { mode: 'coverage', label: 'Coverage' },
+  { mode: 'press', label: 'Press freedom' }
+];
+
+function buildToggle(container) {
+  _toggleEl = document.createElement('div');
+  _toggleEl.className = 'map-layer';
+  for (var i = 0; i < LAYERS.length; i++) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip';
+    b.setAttribute('data-layer', LAYERS[i].mode);
+    b.textContent = LAYERS[i].label;
+    _toggleEl.appendChild(b);
+  }
+  if (_legendEl && _legendEl.parentNode === container) {
+    container.insertBefore(_toggleEl, _legendEl);
+  } else {
+    container.appendChild(_toggleEl);
+  }
+  updateToggle();
+}
+
+function updateToggle() {
+  if (!_toggleEl) return;
+  var btns = _toggleEl.querySelectorAll('button');
+  for (var i = 0; i < btns.length; i++) {
+    var on = btns[i].getAttribute('data-layer') === _mode;
+    btns[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+    if (on) btns[i].classList.add('on'); else btns[i].classList.remove('on');
+  }
+}
+
+function setMode(mode) {
+  if (mode !== 'coverage' && mode !== 'press') return;
+  if (mode === _mode) return;
+  _mode = mode;
+  updateToggle();
+  renderLegend();
+  if (_svgRoot && _geo) paintMap(_svgRoot, _geo);
 }
 
 // --- tray ---
@@ -185,7 +330,9 @@ export async function initMap(el) {
     return;
   }
 
+  _geo = geo;
   paintMap(_svgRoot, geo);
+  if (hasPressData(geo)) buildToggle(el);
   buildTray(el, geo.buckets || {});
 
   // Mark init complete, then apply current view to decide visibility.
@@ -196,8 +343,14 @@ export async function initMap(el) {
     el.removeAttribute('hidden');
   }
 
-  // Tray click
+  // Layer toggle, tray and country clicks
   el.addEventListener('click', function (e) {
+    var layerBtn = e.target.closest('[data-layer]');
+    if (layerBtn) {
+      setMode(layerBtn.getAttribute('data-layer'));
+      return;
+    }
+
     var chip = e.target.closest('[data-scope]');
     if (chip) {
       var scopeVal = chip.getAttribute('data-scope');
@@ -223,14 +376,9 @@ export async function initMap(el) {
     var iso = path.id.toUpperCase();
     var countries = geo.countries || {};
     var d = countries[iso];
-    var name = (d && d.name) ? d.name : iso;
-    var label;
-    if (d && d.items > 0) {
-      label = name + ' — ' + d.items + ' items, ' + d.sources + ' sources';
-    } else {
-      label = name + ' — no sources';
-    }
-    showTip(label, e.clientX, e.clientY);
+    var name = (d && d.name) ? d.name : regionName(iso);
+    var pfMap = geo.press_freedom || {};
+    showTip(tipText(_mode, name, d, pfMap[iso]), e.clientX, e.clientY);
   });
 
   _svgRoot.addEventListener('mouseleave', function () {
