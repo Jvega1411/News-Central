@@ -1,6 +1,6 @@
 # News Central
 
-Single-user, local world-news reader built for preparing CMUDE 2027 (Spanish-language British Parliamentary debate worlds, Barcelona). It pulls RSS/Atom feeds from ~140 outlets across 12 regions, serves a reader in the browser, and lets the user save items with notes and export them as Markdown to digest later with Claude. The user's main knowledge gap is economics, politics and EU/Spain context, with global scope (Asia, Africa, Latin America, culture and ideas).
+Single-user, local world-news reader built for preparing CMUDE 2027 (Spanish-language British Parliamentary debate worlds, Barcelona). It pulls RSS/Atom feeds from ~185 outlets across 12 regions, serves a reader in the browser, and lets the user save items with notes and export them as Markdown to digest later with Claude. The user's main knowledge gap is economics, politics and EU/Spain context, with global scope (Asia, Africa, Latin America, culture and ideas).
 
 The plan lives in `ROADMAP.md`. Work phase by phase.
 
