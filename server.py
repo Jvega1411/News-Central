@@ -905,6 +905,14 @@ def export_markdown(only_undigested):
     return "\n".join(lines)
 
 
+def static_path(path):
+    """Map a request path to a file under static/, or None if it tries to leave it."""
+    parts = [p for p in path.replace("\\", "/").split("/") if p not in ("", ".")]
+    if not parts or any(p == ".." or ":" in p for p in parts):
+        return None
+    return os.path.join(BASE_DIR, "static", *parts)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "NewsCentral/1.0"
 
@@ -925,11 +933,8 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
 
     def _serve_static(self, path, ctype):
-        safe = os.path.normpath(path.lstrip("/")).replace("\\", "/")
-        if safe.startswith("..") or ":" in safe:
-            return self._json({"error": "not found"}, 404)
-        full = os.path.join(BASE_DIR, "static", *safe.split("/"))
-        if not os.path.isfile(full):
+        full = static_path(path)
+        if not full or not os.path.isfile(full):
             return self._json({"error": "not found"}, 404)
         with open(full, "rb") as f:
             self._send(200, f.read(), ctype)
