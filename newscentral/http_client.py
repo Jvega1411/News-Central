@@ -22,6 +22,11 @@ CURL = shutil.which("curl")
 
 def make_ssl_context():
     ctx = ssl.create_default_context()
+    # Python 3.13+ turns on VERIFY_X509_STRICT, which rejects valid certificates that lack
+    # RFC 5280 details such as the Subject Key Identifier (PTS, Taiwan). Chain and hostname
+    # are still verified; this matches Python 3.12 and older, and curl.
+    if hasattr(ssl, "VERIFY_X509_STRICT"):
+        ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
     # python.org builds on macOS ship without CA certificates; the system bundle fixes that.
     for path in ("/etc/ssl/cert.pem", "/usr/local/etc/openssl@3/cert.pem",
                  "/usr/local/etc/openssl@1.1/cert.pem", "/opt/homebrew/etc/openssl@3/cert.pem"):
