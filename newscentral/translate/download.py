@@ -126,7 +126,11 @@ def download_repo(repo, dest, base=HUB, log=print):
     for name in files:
         if name in SKIP_FILES:
             continue
-        target = os.path.join(dest, *name.split("/"))
+        parts = name.split("/")
+        if name.startswith("/") or "\\" in name or ".." in parts or os.path.isabs(name):
+            log("  skipping unsafe file name", repr(name))
+            continue
+        target = os.path.join(dest, *parts)
         if os.path.isfile(target):          # written via .part + rename, so complete
             continue
         log("  downloading", name)

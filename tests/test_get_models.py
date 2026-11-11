@@ -99,6 +99,18 @@ class TestDownloadRepo(HubCase):
         self.assertIn("cannot reach 127.0.0.1", str(cm.exception))
 
 
+class TestUnsafeNames(unittest.TestCase):
+    def test_unsafe_hub_names_are_skipped(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        names = ["../evil.txt", "/abs.txt", "a\\b.txt", "sub/../../x.txt", "ok/file.bin"]
+        got, logged = [], []
+        with mock.patch.object(download, "repo_info", return_value=("abc123", names)),                 mock.patch.object(download, "download_file", lambda url, target, log: got.append(target)):
+            download.download_repo("org/model", d, "http://hub", lambda *a: logged.append(" ".join(a)))
+        self.assertEqual(got, [os.path.join(d, "ok", "file.bin")])
+        self.assertEqual(len([l for l in logged if "skipping" in l]), 4)
+
+
 class TestMessages(unittest.TestCase):
     def test_tls_interception_has_a_clear_message(self):
         err = urllib.error.URLError(ssl.SSLError(1, "CERTIFICATE_VERIFY_FAILED"))
