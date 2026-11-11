@@ -127,6 +127,22 @@ FTS_TRIGGERS = {
                     "INSERT INTO items_fts(rowid, title, summary) VALUES (new.rowid, new.title, new.summary); END",
 }
 
+TR_FTS_TABLE = ("CREATE VIRTUAL TABLE translations_fts USING fts5(text, content='translations', "
+                "content_rowid='rowid', tokenize='%s')")
+TR_FTS_TRIGGERS = {
+    "translations_fts_ai": "CREATE TRIGGER translations_fts_ai AFTER INSERT ON translations BEGIN "
+                           "INSERT INTO translations_fts(rowid, text) VALUES (new.rowid, new.text); END",
+    "translations_fts_ad": "CREATE TRIGGER translations_fts_ad AFTER DELETE ON translations BEGIN "
+                           "INSERT INTO translations_fts(translations_fts, rowid, text) "
+                           "VALUES ('delete', old.rowid, old.text); END",
+    "translations_fts_au": "CREATE TRIGGER translations_fts_au AFTER UPDATE OF text ON translations BEGIN "
+                           "INSERT INTO translations_fts(translations_fts, rowid, text) "
+                           "VALUES ('delete', old.rowid, old.text); "
+                           "INSERT INTO translations_fts(rowid, text) VALUES (new.rowid, new.text); END",
+}
+# (index name, CREATE statement with a %s for the tokenizer, triggers)
+FTS_INDEXES = (("items_fts", FTS_TABLE, FTS_TRIGGERS), ("translations_fts", TR_FTS_TABLE, TR_FTS_TRIGGERS))
+
 
 def fts5_available(db):
     try:
@@ -209,37 +225,40 @@ class Store:
             raise SchemaMismatch("database schema version is %d but this code expects %d; restart the "
                                  "server so that the server and the worker run the same code" % (found, expected))
         names = {r[0] for r in self.db.execute("SELECT name FROM sqlite_master")}
-        self.fts = bool(fts) and "items_fts" in names
+        self.fts = bool(fts) and "items_fts" in names and "translations_fts" in names
 
     def ensure_fts(self, wanted=True):
-        """The search index is derived data that depends on the SQLite build, not on the schema
-        version, so it is not a numbered migration. Runs at every startup.
-        The index uses the implicit rowid of `items`: never VACUUM the database without calling
-        this afterwards with the triggers dropped, because VACUUM may renumber rowids."""
+        """The search indexes are derived data that depend on the SQLite build, not on the schema
+        version, so they are not numbered migrations. Runs at every startup of the server.
+        The indexes use the implicit rowids of `items` and `translations`: never VACUUM the
+        database without calling this afterwards with the triggers dropped, because VACUUM may
+        renumber rowids."""
         with self.lock:
             names = {r[0] for r in self.db.execute("SELECT name FROM sqlite_master")}
             if not (wanted and fts5_available(self.db)):
                 # Triggers that write to a module this build lacks would break every insert.
-                for name in FTS_TRIGGERS:
-                    self.db.execute("DROP TRIGGER IF EXISTS %s" % name)
+                for _, _, triggers in FTS_INDEXES:
+                    for name in triggers:
+                        self.db.execute("DROP TRIGGER IF EXISTS %s" % name)
                 self.db.commit()
                 self.fts = False
                 return False
-            rebuild = False
             self.db.execute("BEGIN")
             try:
-                if "items_fts" not in names:
-                    try:
-                        self.db.execute(FTS_TABLE % "unicode61 remove_diacritics 2")
-                    except sqlite3.OperationalError:      # SQLite older than 3.27
-                        self.db.execute(FTS_TABLE % "unicode61")
-                    rebuild = True
-                for name, sql in FTS_TRIGGERS.items():
-                    if name not in names:
-                        self.db.execute(sql)
+                for index, create, triggers in FTS_INDEXES:
+                    rebuild = False
+                    if index not in names:
+                        try:
+                            self.db.execute(create % "unicode61 remove_diacritics 2")
+                        except sqlite3.OperationalError:      # SQLite older than 3.27
+                            self.db.execute(create % "unicode61")
                         rebuild = True
-                if rebuild:
-                    self.db.execute("INSERT INTO items_fts(items_fts) VALUES ('rebuild')")
+                    for name, sql in triggers.items():
+                        if name not in names:
+                            self.db.execute(sql)
+                            rebuild = True
+                    if rebuild:
+                        self.db.execute("INSERT INTO %s(%s) VALUES ('rebuild')" % (index, index))
                 self.db.commit()
             except Exception:
                 self.db.rollback()
@@ -332,22 +351,35 @@ class Store:
                 "GROUP BY day, lang ORDER BY day DESC, COUNT(*) DESC", (since,))]
 
     def search(self, q="", since=None, until=None, region=None, country=None, scope=None, lang=None,
-               kind=None, source=None, limit=50, offset=0):
-        """Whole-archive search. Returns (rows, total, engine). Dates filter on first_seen."""
+               kind=None, source=None, limit=50, offset=0, tr_lang=TARGET_LANG):
+        """Whole-archive search over the original text and its translations into tr_lang.
+        Returns (rows, total, engine). Dates filter on first_seen. An item matched through both
+        its original and its translation appears once, ranked by its best score. With FTS, every
+        term must be in the original (title and summary together) or in one translated field."""
         terms = search_terms(q)
+        cte, cte_params = "", []
         joins = "FROM items i LEFT JOIN sources s ON s.id = i.source_id"
         where, params = [], []
         order = "i.first_seen DESC"
         if terms and self.fts:
-            joins += " JOIN items_fts ON items_fts.rowid = i.rowid"
-            where.append("items_fts MATCH ?")
-            params.append(" ".join('"%s"' % t for t in terms))
-            order = "bm25(items_fts), i.first_seen DESC"
+            match = " ".join('"%s"' % t for t in terms)
+            cte = ("WITH hits(rid, score) AS ("
+                   "SELECT rowid, bm25(items_fts) FROM items_fts WHERE items_fts MATCH ? "
+                   "UNION ALL "
+                   "SELECT i2.rowid, bm25(translations_fts) FROM translations_fts "
+                   "JOIN translations t ON t.rowid = translations_fts.rowid "
+                   "JOIN items i2 ON i2.id = t.item_id "
+                   "WHERE translations_fts MATCH ? AND t.lang = ?), "
+                   "best AS (SELECT rid, MIN(score) AS score FROM hits GROUP BY rid) ")
+            cte_params = [match, match, tr_lang]
+            joins += " JOIN best ON best.rid = i.rowid"
+            order = "best.score, i.first_seen DESC"
         elif terms:
             for t in terms:
                 like = "%" + t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-                where.append("(i.title LIKE ? ESCAPE '\\' OR i.summary LIKE ? ESCAPE '\\')")
-                params.extend([like, like])
+                where.append("(i.title LIKE ? ESCAPE '\\' OR i.summary LIKE ? ESCAPE '\\' OR i.id IN "
+                             "(SELECT item_id FROM translations WHERE lang = ? AND text LIKE ? ESCAPE '\\'))")
+                params.extend([like, like, tr_lang, like])
         filters = (
             ("i.first_seen >= ?", since),
             ("i.first_seen < ?", until),
@@ -364,11 +396,13 @@ class Store:
                 params.append(value)
         sql_where = (" WHERE " + " AND ".join(where)) if where else ""
         with self.lock:
-            total = self.db.execute("SELECT COUNT(*) " + joins + sql_where, params).fetchone()[0]
+            total = self.db.execute(cte + "SELECT COUNT(*) " + joins + sql_where,
+                                    cte_params + params).fetchone()[0]
             rows = [dict(r) for r in self.db.execute(
-                "SELECT i.id, i.source_id, i.title, i.link, i.summary, i.published, i.first_seen, i.lang, "
+                cte + "SELECT i.id, i.source_id, i.title, i.link, i.summary, i.published, i.first_seen, i.lang, "
                 "s.name AS source_name, s.region, s.country_iso, s.scope, s.exile, s.covers, s.kind "
-                + joins + sql_where + " ORDER BY " + order + " LIMIT ? OFFSET ?", params + [limit, offset])]
+                + joins + sql_where + " ORDER BY " + order + " LIMIT ? OFFSET ?",
+                cte_params + params + [limit, offset])]
         return rows, total, ("fts" if self.fts else "like")
 
     def get_item(self, item_id):
@@ -494,3 +528,27 @@ class Store:
                 "SELECT COUNT(*) FROM translation_failures WHERE lang = ? AND attempts >= ?",
                 (target, max_attempts)).fetchone()[0]
         return out
+
+    def clear_translations(self, engine=None, src_lang=None, target=TARGET_LANG):
+        """Put items back in the translation queue. With an engine, delete that engine's
+        translations; always clear the failure counts. src_lang limits both to items whose original
+        is in that language. Returns (translations deleted, failure records cleared)."""
+        only = ""
+        extra = []
+        if src_lang:
+            only = " AND item_id IN (SELECT id FROM items WHERE lang = ?)"
+            extra = [src_lang]
+        with self.lock:
+            self.db.execute("BEGIN")
+            try:
+                deleted = 0
+                if engine:
+                    deleted = self.db.execute("DELETE FROM translations WHERE lang = ? AND engine = ?" + only,
+                                              [target, engine] + extra).rowcount
+                cleared = self.db.execute("DELETE FROM translation_failures WHERE lang = ?" + only,
+                                          [target] + extra).rowcount
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                raise
+        return deleted, cleared

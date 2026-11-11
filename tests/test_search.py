@@ -93,6 +93,33 @@ class SearchTests:
         self.assertEqual(self.get("/api/search?q=%25_")[0], 400)
         self.assertEqual(self.get("/api/search?from=abc")[0], 400)
 
+    def translate_ahram(self):
+        item_id = self.get("/api/search?source=ahram")[1]["items"][0]["id"]
+        self.store.save_translations([
+            {"item_id": item_id, "field": "title", "lang": "es",
+             "text": "Noticias económicas de Egipto", "engine": "fake", "error": ""},
+            {"item_id": item_id, "field": "summary", "lang": "es",
+             "text": "Egipto publica sus cifras", "engine": "fake", "error": ""}])
+        return item_id
+
+    def test_spanish_query_finds_the_arabic_original_once(self):
+        self.translate_ahram()
+        _, body = self.get("/api/search?q=egipto")
+        self.assertEqual([i["title"] for i in body["items"]], [ARABIC])
+        self.assertEqual(body["total"], 1)
+
+    def test_translation_matches_combine_with_filters(self):
+        self.translate_ahram()
+        self.assertEqual(self.titles("q=egipto&lang=ar"), [ARABIC])
+        self.assertEqual(self.titles("q=egipto&source=bbc"), [])
+        self.assertEqual(self.titles("q=rates"), ["Bank of England holds rates", "ECB rates decision",
+                                                  "Rates at a closed outlet"])
+
+    def test_deleted_translation_is_no_longer_found(self):
+        self.translate_ahram()
+        self.store.clear_translations(engine="fake")
+        self.assertEqual(self.titles("q=egipto"), [])
+
     def test_item_fields_and_removed_source(self):
         _, body = self.get("/api/search?q=inflaci%C3%B3n")
         item = body["items"][0]
@@ -110,6 +137,22 @@ class TestSearchFts(SearchTests, ApiCase):
     def test_diacritics_are_folded(self):
         self.assertEqual(self.titles("q=espana"), ["Banco de España sube tipos"])
         self.assertEqual(self.titles("q=inflacion"), ["Banco de España sube tipos"])
+
+    def test_translation_diacritics_are_folded(self):
+        self.translate_ahram()
+        self.assertEqual(self.titles("q=economicas"), [ARABIC])
+
+    def test_translation_index_is_rebuilt_when_missing(self):
+        path = os.path.join(self.dir, "news.db")
+        self.translate_ahram()
+        for name in ("translations_fts_ai", "translations_fts_ad", "translations_fts_au"):
+            self.store.db.execute("DROP TRIGGER %s" % name)
+        self.store.db.execute("DROP TABLE translations_fts")
+        self.store.db.commit()
+        self.store.db.close()
+        self.store = Store(path)
+        self.app.store = self.store
+        self.assertEqual(self.titles("q=egipto"), [ARABIC])
 
     def test_index_is_rebuilt_when_triggers_were_missing(self):
         path = os.path.join(self.dir, "news.db")

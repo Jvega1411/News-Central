@@ -138,3 +138,14 @@ def tr_ok(item_id, field, text="texto", engine="fake"):
 
 def tr_failed(item_id, field, error="boom"):
     return {"item_id": item_id, "field": field, "lang": "es", "text": "", "engine": "fake", "error": error}
+
+
+def load_tool(name):
+    """Import tools/<name>.py as a module (tools/ is not a package)."""
+    import importlib.util
+    from newscentral.config import BASE_DIR
+    path = os.path.join(BASE_DIR, "tools", name + ".py")
+    spec = importlib.util.spec_from_file_location("tool_" + name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
