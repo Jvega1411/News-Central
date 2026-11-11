@@ -231,6 +231,7 @@ function archiveSource(it) {
 
 function loadArchive(more) {
   var A = S.archive, p = archiveParams(), key = JSON.stringify(p);
+  if (more && A.loading) return;   // a second click while a page is loading would fetch the same offset
   if (!more) { A.key = key; A.items = []; A.total = 0; A.error = ''; }
   if (!archiveHasCriteria(p)) { A.loading = false; return; }
   p.limit = ARCHIVE_PAGE;
