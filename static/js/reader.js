@@ -27,7 +27,7 @@ const S = {
   running: false, updated: 0, sourcesError: '', booting: true, applyAfterRun: false, timer: null,
   archFrom: '', archTo: '',
   readLangs: ['es', 'en'], showLangs: pref.get('showLangs', false), truncated: false,
-  worker: [], workerEnabled: true,
+  worker: [], workerEnabled: true, trSeen: 0, loaded: false,
   archive: { key: null, items: [], total: 0, loading: false, error: '' },
   _ignoreState: false
 };
@@ -89,6 +89,28 @@ async function loadSources() {
   S.workerEnabled = d.worker_enabled !== false;
 }
 
+// Text the live-feed search matches: original, translation, outlet and country.
+function itemText(it, src) {
+  var tr = it.tr || {};
+  return norm(it.title + ' ' + (it.summary || '') + ' ' + (tr.title || '') + ' ' + (tr.summary || '') + ' ' +
+              (src ? src.name + ' ' + (src.country || '') : ''));
+}
+
+// Translations that finished after their item reached the page: update the item in place.
+function applyTranslated(translated) {
+  var changed = 0;
+  translated = translated || {};
+  for (var tid in translated) {
+    if (!Object.prototype.hasOwnProperty.call(translated, tid)) continue;
+    var known = S.items.get(tid);
+    if (!known) continue;
+    known.tr = translated[tid];
+    known._text = itemText(known, S.sources[known.s]);
+    changed++;
+  }
+  return changed;
+}
+
 function mergeItems(d) {
   var added = 0;
   for (var i = 0; i < d.items.length; i++) {
@@ -96,7 +118,7 @@ function mergeItems(d) {
     if (S.items.has(it.id)) continue;
     var src = S.sources[it.s];
     it._sport = isSportOrCeleb(it.link);
-    it._text = norm(it.title + ' ' + (it.summary || '') + ' ' + (src ? src.name + ' ' + (src.country || '') : ''));
+    it._text = itemText(it, src);
     S.items.set(it.id, it);
     if (it.fs > S.maxSeen) S.maxSeen = it.fs;
     added++;
@@ -121,8 +143,13 @@ async function loadItems() {
   } else {
     since = S.maxSeen || S.loadedFrom;
   }
-  var d = await fetchItems(since);
+  // tr_since is sent only on polls (not on the first load), and S.trSeen only advances here, so a
+  // translation is never skipped; ensureWindow() below neither sends nor moves it.
+  var d = await fetchItems(since, S.loaded ? S.trSeen : 0);
+  S.loaded = true;
   var added = mergeItems(d);
+  added += applyTranslated(d.translated);
+  if (d.tr_seen) S.trSeen = d.tr_seen;
   S.running = d.running; S.updated = d.updated;
   S.truncated = !!d.truncated;
   pruneItems();
@@ -183,7 +210,8 @@ function compute() {
     var inRegion = !!S.country || !!S.scope || S.region === 'All' || src.region === S.region;
     // Languages the user does not read stay out of the feed (and out of its counts) unless asked for.
     // An item's own language wins over its source's.
-    if (!S.showLangs && S.readLangs.indexOf(it.lang || src.lang) === -1) {
+    // Hidden: unread languages with no translated title yet.
+    if (!S.showLangs && S.readLangs.indexOf(it.lang || src.lang) === -1 && !(it.tr && it.tr.title)) {
       if (inRegion && it.fs <= S.cutoff) hidden++;
       continue;
     }
@@ -209,6 +237,35 @@ function renderStatus() {
   $('#status').textContent = txt;
 }
 
+// Title block: the Spanish title as the link, the original underneath in a smaller grey line.
+function titleHTML(it) {
+  var href = safeHref(it.link);
+  if (it.tr && it.tr.title) {
+    return '<a class="title" lang="es" href="' + href + '" target="_blank" rel="noopener">' + esc(it.tr.title) + '</a>' +
+      '<div class="orig" dir="auto" lang="' + esc(it.lang || '') + '">' + esc(it.title) + '</div>';
+  }
+  return '<a class="title" dir="auto" href="' + href + '" target="_blank" rel="noopener">' + esc(it.title) + '</a>';
+}
+
+// Summary block: the translation, with the original summary behind a click.
+function summaryHTML(it, open) {
+  var cls = 'sum' + (open ? ' open' : '');
+  if (it.tr && it.tr.summary) {
+    return '<div class="' + cls + '" lang="es">' + esc(it.tr.summary) + '</div>' +
+      (it.summary ? '<details class="orig-sum"><summary>Resumen original</summary><div dir="auto" lang="' +
+                    esc(it.lang || '') + '">' + esc(it.summary) + '</div></details>' : '');
+  }
+  return it.summary ? '<div class="' + cls + '" dir="auto">' + esc(it.summary) + '</div>' : '';
+}
+
+function langTag(it, lang) {
+  if (it.tr && (it.tr.title || it.tr.summary)) {
+    return '<span class="tag" title="Machine translation (' + esc(it.tr.engine || '') + ')">traducido de ' +
+      esc(lang) + '</span>';
+  }
+  return lang && lang !== 'en' ? '<span class="tag">' + esc(lang) + '</span>' : '';
+}
+
 function itemHTML(it, now, src) {
   src = src || S.sources[it.s];
   var d = new Date(it.t * 1000);
@@ -216,12 +273,14 @@ function itemHTML(it, now, src) {
   var top = sameDay ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                     : d.toLocaleDateString([], { day: 'numeric', month: 'short' });
   var tags = [];
-  if (src.lang && src.lang !== 'en') tags.push('<span class="tag">' + esc(src.lang) + '</span>');
+  var lang = it.lang || src.lang;
+  var tagLang = langTag(it, lang);
+  if (tagLang) tags.push(tagLang);
   if (src.kind === 'analysis') tags.push('<span class="tag an">analysis</span>');
   if (src.kind === 'official') tags.push('<span class="tag an">official</span>');
   if (src.state_media) tags.push('<span class="tag state">state-controlled</span>');
   if (src.paywall) tags.push('<span class="tag">paywall</span>');
-  if (src.lang && src.lang !== 'en' && src.lang !== 'es') {
+  if (lang && lang !== 'en' && lang !== 'es' && !(it.tr && it.tr.title)) {
     tags.push('<a href="https://translate.google.com/translate?sl=auto&tl=en&u=' + encodeURIComponent(it.link) +
               '" target="_blank" rel="noopener">translate</a>');
   }
@@ -230,8 +289,7 @@ function itemHTML(it, now, src) {
     '<div class="time">' + esc(top) + '<span class="ago">' + ago(it.t) + '</span></div>' +
     '<div><div class="meta"><span class="src" data-src="' + esc(it.s) + '" title="Show only this outlet">' + esc(src.name) +
     '</span><span>' + esc(src.country || '') + '</span>' + tags.join('') + '</div>' +
-    '<a class="title" dir="auto" href="' + safeHref(it.link) + '" target="_blank" rel="noopener">' + esc(it.title) + '</a>' +
-    (it.summary ? '<div class="sum" dir="auto">' + esc(it.summary) + '</div>' : '') + '</div>' +
+    titleHTML(it) + summaryHTML(it, false) + '</div>' +
     '<button class="star' + (saved ? ' on' : '') + '" data-star="' + esc(it.id) + '" title="Save for later">' +
     (saved ? '★' : '☆') + '</button></article>';
 }
@@ -394,9 +452,9 @@ function renderSaved() {
   h += list.map(function (x) {
     return '<div class="saved-item' + (x.digested ? ' done' : '') + '">' +
       '<div class="meta"><span class="src">' + esc(x.source_name) + '</span><span>' + esc(x.country || '') + '</span><span>' +
-      esc(x.region || '') + '</span><span>' + (x.published ? esc(new Date(x.published * 1000).toLocaleString()) : '') + '</span></div>' +
-      '<a class="title" dir="auto" href="' + safeHref(x.link) + '" target="_blank" rel="noopener">' + esc(x.title) + '</a>' +
-      (x.summary ? '<div class="sum open" dir="auto">' + esc(x.summary) + '</div>' : '') +
+      esc(x.region || '') + '</span><span>' + (x.published ? esc(new Date(x.published * 1000).toLocaleString()) : '') + '</span>' +
+      (x.tr ? langTag(x, x.lang) : '') + '</div>' +
+      titleHTML(x) + summaryHTML(x, true) +
       '<textarea placeholder="Your note: why it matters, which motion or argument it feeds…" data-note="' + esc(x.id) + '">' +
       esc(x.note || '') + '</textarea>' +
       '<div class="toolbar"><label class="btn"><input type="checkbox" data-dig="' + esc(x.id) + '"' + (x.digested ? ' checked' : '') +

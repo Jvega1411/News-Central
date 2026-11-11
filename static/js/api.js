@@ -25,8 +25,8 @@ export function fetchSources() {
   return getJSON('/api/sources');
 }
 
-export function fetchItems(since) {
-  return getJSON('/api/items?since=' + since);
+export function fetchItems(since, trSince) {
+  return getJSON('/api/items?since=' + since + (trSince ? '&tr_since=' + trSince : ''));
 }
 
 export function fetchSaved() {
