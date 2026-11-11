@@ -1,5 +1,5 @@
 'use strict';
-import { fetchSources, fetchItems, fetchSaved, postRefresh, postSave, postUnsave, postSavedUpdate, fetchExportMd } from './api.js';
+import { fetchSources, fetchItems, fetchSaved, postRefresh, postSave, postUnsave, postSavedUpdate, fetchExportMd, fetchStats } from './api.js';
 import { setState, onState } from './state.js';
 
 const REGION_ORDER = ['Spain', 'Europe & EU', 'Eurasia', 'Middle East & N. Africa', 'Africa', 'Latin America',
@@ -18,7 +18,7 @@ const pref = {
 };
 
 const S = {
-  items: new Map(), sources: {}, sourceList: [], saved: new Map(),
+  items: new Map(), stats: null, sources: {}, sourceList: [], saved: new Map(),
   region: pref.get('region', 'All'), win: pref.get('win', 24), kind: pref.get('kind', 'all'),
   hideState: pref.get('hideState', false), hideSports: pref.get('hideSports', true), showDigested: pref.get('showDigested', false),
   q: '', src: '', country: '', scope: '', shown: PAGE, cutoff: 0, maxSeen: 0, view: 'feed',
@@ -262,6 +262,43 @@ function renderSaved() {
   $('#saved').innerHTML = h;
 }
 
+function pct(x) { return x === null || x === undefined ? 'no data' : (Math.round(x * 1000) / 10) + '%'; }
+
+function duration(seconds) {
+  var m = Math.round(seconds / 60);
+  if (m < 60) return m + ' min';
+  var h = Math.floor(m / 60);
+  return h < 48 ? h + ' h ' + (m % 60) + ' min' : Math.round(h / 24) + ' days';
+}
+
+function collectionHTML() {
+  var st = S.stats;
+  if (!st) return '';
+  var read = st.read_langs || [];
+  var days = {}, order = [];
+  st.volume.forEach(function (v) {
+    if (!days[v.day]) { days[v.day] = { read: 0, other: 0, chars: 0, langs: [] }; order.push(v.day); }
+    var d = days[v.day];
+    if (read.indexOf(v.lang) !== -1) {
+      d.read += v.items;
+    } else {
+      d.other += v.items; d.chars += v.chars;
+      d.langs.push((v.lang || 'unknown') + ' ' + v.items);
+    }
+  });
+  var h = '<h2>Collection</h2><div class="toolbar">Uptime last 7 days: ' + esc(pct(st.uptime_7d)) +
+    ' · last 30 days: ' + esc(pct(st.uptime_30d)) + ' · ' + st.gaps.length + ' gap' + (st.gaps.length === 1 ? '' : 's') +
+    (st.longest_gap ? ' · longest ' + esc(duration(st.longest_gap)) : '') + '</div>';
+  h += '<table class="volume"><thead><tr><th>Day (UTC)</th><th>Read (' + esc(read.join(', ')) +
+    ')</th><th>Other languages</th><th>Characters to translate</th><th>Breakdown</th></tr></thead><tbody>';
+  h += order.slice(0, 14).map(function (day) {
+    var d = days[day];
+    return '<tr><td>' + esc(day) + '</td><td class="count">' + d.read + '</td><td class="count">' + d.other +
+      '</td><td class="count">' + d.chars.toLocaleString() + '</td><td class="detail">' + esc(d.langs.join(' · ')) + '</td></tr>';
+  }).join('');
+  return h + '</tbody></table><h2>Sources</h2>';
+}
+
 function renderSources() {
   var rank = { error: 0, pending: 1, discovered: 2, ok: 3 };
   var L = S.sourceList.slice().sort(function (a, b) {
@@ -279,7 +316,7 @@ function renderSources() {
       '<td>' + (s.last_ok ? (ago(s.last_ok) === 'now' ? 'just now' : ago(s.last_ok) + ' ago') : 'never') + '</td>' +
       '<td class="detail">' + esc(s.status === 'error' ? s.error : s.feed) + '</td></tr>';
   }).join('');
-  $('#sources').innerHTML = h + '</tbody></table>';
+  $('#sources').innerHTML = collectionHTML() + h + '</tbody></table>';
 }
 
 function setView(v) {
@@ -300,7 +337,11 @@ function setView(v) {
   $('#banner').style.display = 'none';
   if (feedVisible) renderFeed();
   if (v === 'saved') loadSaved().then(renderSaved).catch(function () { toast('Server not reachable'); });
-  if (v === 'sources') renderSources();
+  if (v === 'sources') {
+    renderSources();
+    fetchStats(30).then(function (d) { S.stats = d; if (S.view === 'sources') renderSources(); })
+      .catch(function () { toast('Server not reachable'); });
+  }
   window.scrollTo(0, 0);
 }
 

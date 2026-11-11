@@ -56,6 +56,10 @@ export function fetchGeo(since) {
   return getJSON('/api/geo?since=' + (since || 0));
 }
 
+export function fetchStats(days) {
+  return getJSON('/api/stats?days=' + (days || 30));
+}
+
 export function fetchExportMd(onlyUndigested) {
   var url = '/api/export.md' + (onlyUndigested ? '?only=undigested' : '');
   return fetch(url, { cache: 'no-store' }).then(function (r) {
