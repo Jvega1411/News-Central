@@ -113,8 +113,9 @@ def install_signal_handlers(worker):
 
 
 def build_jobs(cfg, p):
-    """The jobs this worker runs, in priority order. Task 7 adds translation."""
-    return []
+    """The jobs this worker runs, in priority order."""
+    from .translate.job import TranslateJob
+    return [TranslateJob(cfg, p["models"])]
 
 
 def main(argv=None):

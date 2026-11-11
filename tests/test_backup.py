@@ -141,6 +141,33 @@ class BackupCase(unittest.TestCase):
         finally:
             new.db.close()
 
+    def test_translations_are_backed_up_by_day_and_restored(self):
+        self.seed()
+        created = TODAY - 2 * DAY + 77
+        self.store.db.execute(
+            "INSERT INTO translations (item_id, field, lang, text, engine, created) VALUES (?,?,?,?,?,?)",
+            ("id1", "title", "es", TITLE, "fake", created))
+        self.store.db.execute(
+            "INSERT INTO translations (item_id, field, lang, text, engine, created) VALUES (?,?,?,?,?,?)",
+            ("id5", "title", "es", "hoy", "fake", TODAY + 5))            # today: not exported yet
+        self.store.db.commit()
+        summary = backup.run_backup(self.db_path, self.out, NOW)
+        self.assertEqual(summary["written"]["translations"], 1)
+        path = os.path.join(self.out, "translations", backup.utc_date(created)[:4],
+                            backup.utc_date(created) + ".ndjson.gz")
+        self.assertTrue(os.path.isfile(path))
+        self.assertEqual(json.loads(read_gz(path))["text"], TITLE)
+        new_db = os.path.join(self.dir, "restored", "news.db")
+        counts = restore_backup.restore(self.out, new_db)
+        self.assertEqual(counts["translations"], 1)
+        new = Store(new_db)
+        try:
+            rows = [tuple(r) for r in new.db.execute(
+                "SELECT item_id, field, lang, text, engine, created FROM translations")]
+            self.assertEqual(rows, [("id1", "title", "es", TITLE, "fake", created)])
+        finally:
+            new.db.close()
+
     def test_restore_refuses_existing_target(self):
         self.seed()
         backup.run_backup(self.db_path, self.out, NOW)

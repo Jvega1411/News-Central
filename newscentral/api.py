@@ -4,7 +4,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .config import DEFAULTS, INDEX_FILE, LIVE_ROW_LIMIT, LIVE_WINDOW_HOURS, STATIC_DIR
+from .config import DEFAULTS, INDEX_FILE, LIVE_ROW_LIMIT, LIVE_WINDOW_HOURS, STATIC_DIR, TARGET_LANG
 from .fetcher import source_payload
 from .sources import load_countries, load_press_freedom
 from .stats import gaps, volume
@@ -40,7 +40,8 @@ def stats_payload(app, days, now=None):
     return {"uptime_7d": week["uptime"], "uptime_30d": wide["uptime"], "days": days,
             "gaps": wide["gaps"], "longest_gap": wide["longest"],
             "volume": volume(app.store.volume_rows(now - days * 86400)),
-            "read_langs": app.config["read_langs"]}
+            "read_langs": app.config["read_langs"],
+            "translation": app.store.translation_counts(app.config["read_langs"], TARGET_LANG, now)}
 
 
 def items_payload(app, since):

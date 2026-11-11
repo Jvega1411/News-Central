@@ -11,7 +11,7 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 
-DAY_TABLES = [("items", "first_seen")]          # (table, time column): one file per complete UTC day
+DAY_TABLES = [("items", "first_seen"), ("translations", "created")]        # (table, time column): one file per complete UTC day
 STATE_TABLES = ["saved", "sources", "feed_state"]
 STATE_KEEP = 14
 STATE_RE = re.compile(r"^state-\d{4}-\d{2}-\d{2}\.json\.gz$")

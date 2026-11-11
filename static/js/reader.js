@@ -436,6 +436,14 @@ function workerHTML() {
   }).join('');
 }
 
+function translationHTML(tr) {
+  if (!tr) return '';
+  return '<div class="toolbar">Translation into Spanish: ' + tr.pending_titles.toLocaleString() + ' titles and ' +
+    tr.pending_summaries.toLocaleString() + ' summaries waiting · ' + tr.done_24h.toLocaleString() +
+    ' done in the last 24 h' + (tr.failed ? ' · ' + tr.failed.toLocaleString() + ' given up after 3 failures' : '') +
+    '</div>';
+}
+
 function collectionHTML() {
   var st = S.stats;
   if (!st) return '';
@@ -454,7 +462,7 @@ function collectionHTML() {
   var h = '<h2>Collection</h2><div class="toolbar">Uptime last 7 days: ' + esc(pct(st.uptime_7d)) +
     ' · last 30 days: ' + esc(pct(st.uptime_30d)) + ' · ' + st.gaps.length + ' gap' + (st.gaps.length === 1 ? '' : 's') +
     (st.longest_gap ? ' · longest ' + esc(duration(st.longest_gap)) : '') + '</div>';
-  h += workerHTML();
+  h += workerHTML() + translationHTML(st.translation);
   h += '<table class="volume"><thead><tr><th>Day (UTC)</th><th>Read (' + esc(read.join(', ')) +
     ')</th><th>Other languages</th><th>Characters to translate</th><th>Breakdown</th></tr></thead><tbody>';
   h += order.slice(0, 14).map(function (day) {
