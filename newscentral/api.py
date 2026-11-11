@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from .config import DEFAULTS, INDEX_FILE, LIVE_ROW_LIMIT, LIVE_WINDOW_HOURS, STATIC_DIR
 from .fetcher import source_payload
 from .sources import load_countries, load_press_freedom
+from .stats import gaps, volume
 from .store import sort_time
 
 
@@ -23,6 +24,17 @@ class App:
 def status_payload(app):
     f = app.fetcher
     return {"running": f.running, "updated": f.last_cycle, "sources_error": f.sources_error,
+            "read_langs": app.config["read_langs"]}
+
+
+def stats_payload(app, days, now=None):
+    now = time.time() if now is None else now
+    interval = app.config["refresh_minutes"] * 60
+    wide = gaps(app.store.run_starts(now - days * 86400), interval, now - days * 86400, now)
+    week = gaps(app.store.run_starts(now - 7 * 86400), interval, now - 7 * 86400, now)
+    return {"uptime_7d": week["uptime"], "uptime_30d": wide["uptime"], "days": days,
+            "gaps": wide["gaps"], "longest_gap": wide["longest"],
+            "volume": volume(app.store.volume_rows(now - days * 86400)),
             "read_langs": app.config["read_langs"]}
 
 
@@ -186,6 +198,14 @@ class Handler(BaseHTTPRequestHandler):
                     extra["Content-Disposition"] = (
                         'attachment; filename="news-central-saved-%s.md"' % time.strftime("%Y-%m-%d"))
                 self._send(200, export_markdown(app, only).encode("utf-8"), "text/markdown; charset=utf-8", extra)
+            elif path == "/api/stats":
+                try:
+                    days = int((q.get("days") or ["30"])[0])
+                except ValueError:
+                    days = 0
+                if not 1 <= days <= 3650:
+                    return self._json({"error": "days must be between 1 and 3650"}, 400)
+                self._json(stats_payload(app, days))
             else:
                 self._json({"error": "not found"}, 404)
         except (BrokenPipeError, ConnectionResetError):

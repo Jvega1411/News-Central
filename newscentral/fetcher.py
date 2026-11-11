@@ -94,6 +94,7 @@ class Fetcher(threading.Thread):
     def cycle(self, force=False):
         self.running = True
         try:
+            started = time.time()
             sources = self.reload_sources()
             states = self.store.states()
             now = time.time()
@@ -102,6 +103,7 @@ class Fetcher(threading.Thread):
                     or states[s["id"]].get("status") != "error"
                     or now - (states[s["id"]].get("last_try") or 0) >= ERROR_RETRY_SECONDS]
             new_total = 0
+            errors = 0
             with ThreadPoolExecutor(max_workers=WORKERS) as pool:
                 futures = {pool.submit(fetch_source, s, states.get(s["id"])): s for s in todo}
                 for fut in as_completed(futures):
@@ -110,10 +112,13 @@ class Fetcher(threading.Thread):
                         result = fut.result()
                     except Exception as e:
                         result = {"feed": (configured_feeds(s)[:1] or [""])[0], "items": [], "status": "error", "error": short_error(e)}
+                    if result["status"] == "error":
+                        errors += 1
                     if result["items"]:
                         new_total += self.store.add_items(s["id"], result["items"], s.get("lang"))
                     self.store.set_state(s["id"], result)
             self.last_cycle = time.time()
+            self.store.add_run(started, self.last_cycle, len(todo), new_total, errors)
             self.write_status()
             print(time.strftime("%H:%M:%S"), "checked %d sources, %d new items" % (len(todo), new_total),
                   flush=True)

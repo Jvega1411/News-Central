@@ -72,6 +72,14 @@ def _m3_renormalize_text(db):
                 db.execute("UPDATE %s SET title = ?, summary = ? WHERE id = ?" % table, (title, summary, row[0]))
 
 
+@migration(4)
+def _m4_fetch_runs(db):
+    db.execute("""CREATE TABLE fetch_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, started REAL NOT NULL, finished REAL,
+        sources_checked INTEGER, new_items INTEGER, errors INTEGER)""")
+    db.execute("CREATE INDEX fetch_runs_started ON fetch_runs(started)")
+
+
 def schema_version():
     return max((v for v, _ in MIGRATIONS), default=0)
 
@@ -162,6 +170,29 @@ class Store:
             self.db.execute("UPDATE items SET lang = (SELECT lang FROM sources WHERE sources.id = items.source_id) "
                             "WHERE lang IS NULL")
             self.db.commit()
+
+    def add_run(self, started, finished, sources_checked, new_items, errors):
+        with self.lock:
+            self.db.execute("INSERT INTO fetch_runs (started, finished, sources_checked, new_items, errors) "
+                            "VALUES (?,?,?,?,?)", (started, finished, sources_checked, new_items, errors))
+            self.db.commit()
+
+    def run_starts(self, since):
+        """Start times from `since`, ascending, preceded by the first run ever if it is older."""
+        with self.lock:
+            first = self.db.execute("SELECT MIN(started) FROM fetch_runs").fetchone()[0]
+            rows = [r[0] for r in self.db.execute(
+                "SELECT started FROM fetch_runs WHERE started >= ? ORDER BY started", (since,))]
+        if first is not None and first < since:
+            rows.insert(0, first)
+        return rows
+
+    def volume_rows(self, since):
+        with self.lock:
+            return [tuple(r) for r in self.db.execute(
+                "SELECT CAST(first_seen / 86400 AS INTEGER) AS day, COALESCE(lang, '') AS lang, COUNT(*), "
+                "SUM(LENGTH(title) + LENGTH(COALESCE(summary, ''))) FROM items WHERE first_seen >= ? "
+                "GROUP BY day, lang ORDER BY day DESC, COUNT(*) DESC", (since,))]
 
     def get_item(self, item_id):
         with self.lock:

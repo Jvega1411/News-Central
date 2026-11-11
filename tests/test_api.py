@@ -1,3 +1,4 @@
+import time
 import unittest
 
 from tests.helpers import ApiCase
@@ -62,6 +63,32 @@ class TestApi(ApiCase):
 
     def test_save_unknown_item_is_404(self):
         self.assertEqual(self.post("/api/save", {"id": "nope"})[0], 404)
+
+    def test_stats_empty(self):
+        status, body = self.get("/api/stats")
+        self.assertEqual(status, 200)
+        self.assertIsNone(body["uptime_7d"])
+        self.assertEqual(body["gaps"], [])
+        self.assertEqual(body["volume"], [])
+        self.assertEqual(body["read_langs"], ["es", "en"])
+
+    def test_stats_reports_runs_and_volume(self):
+        now = time.time()
+        for k in range(8, 0, -1):
+            self.store.add_run(now - k * 900, now - k * 900 + 30, 5, 10, 0)
+        self.add("elpais", "Hola", "https://example.com/a", "mundo")
+        self.add("ahram", "الأخبار", "https://example.com/b")
+        _, body = self.get("/api/stats?days=30")
+        self.assertEqual(body["uptime_7d"], 1.0)
+        self.assertEqual(body["longest_gap"], 0)
+        by_lang = {v["lang"]: v for v in body["volume"]}
+        self.assertEqual(by_lang["es"]["items"], 1)
+        self.assertEqual(by_lang["es"]["chars"], len("Hola") + len("mundo"))
+        self.assertEqual(by_lang["ar"]["items"], 1)
+
+    def test_stats_rejects_bad_days(self):
+        self.assertEqual(self.get("/api/stats?days=abc")[0], 400)
+        self.assertEqual(self.get("/api/stats?days=0")[0], 400)
 
     def test_unknown_path_is_404(self):
         self.assertEqual(self.get("/api/nope")[0], 404)
