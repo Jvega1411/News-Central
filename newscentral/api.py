@@ -4,7 +4,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .config import DEFAULTS, INDEX_FILE, KEEP_HOURS, STATIC_DIR
+from .config import DEFAULTS, INDEX_FILE, LIVE_ROW_LIMIT, LIVE_WINDOW_HOURS, STATIC_DIR
 from .fetcher import source_payload
 from .sources import load_countries, load_press_freedom
 from .store import sort_time
@@ -17,6 +17,7 @@ class App:
         self.store = store
         self.fetcher = fetcher
         self.config = dict(DEFAULTS, **(config or {}))
+        self.live_row_limit = LIVE_ROW_LIMIT
 
 
 def status_payload(app):
@@ -26,24 +27,27 @@ def status_payload(app):
 
 
 def items_payload(app, since):
-    min_time = time.time() - KEEP_HOURS * 3600
+    """Returns (items, truncated)."""
+    min_time = time.time() - LIVE_WINDOW_HOURS * 3600
     known = app.fetcher.source_map()
+    rows, truncated = app.store.items(max(since, min_time - 3600), app.live_row_limit)
     out = []
-    for r in app.store.items(max(since, min_time - 3600)):
+    for r in rows:
         if r["source_id"] not in known:
             continue
         t = sort_time(r["published"], r["first_seen"])
         if t < min_time:
             continue
         out.append({"id": r["id"], "s": r["source_id"], "t": t, "fs": r["first_seen"],
-                    "title": r["title"], "link": r["link"], "summary": r["summary"] or ""})
+                    "title": r["title"], "link": r["link"], "summary": r["summary"] or "",
+                    "lang": r["lang"] or known[r["source_id"]].get("lang", "")})
     out.sort(key=lambda x: x["t"], reverse=True)
-    return out
+    return out, truncated
 
 
 def geo_payload(app, since):
-    cutoff = time.time() - KEEP_HOURS * 3600 - 3600
-    rows = app.store.items(max(since, cutoff))
+    cutoff = time.time() - LIVE_WINDOW_HOURS * 3600 - 3600
+    rows, _ = app.store.items(max(since, cutoff), app.live_row_limit)
     out = aggregate_geo(app.fetcher.sources, rows, load_countries(), since)
     out["updated"] = app.fetcher.last_cycle
     out["press_freedom"] = load_press_freedom()
@@ -51,7 +55,7 @@ def geo_payload(app, since):
 
 
 def aggregate_geo(sources, items, countries, since):
-    min_time = time.time() - KEEP_HOURS * 3600
+    min_time = time.time() - LIVE_WINDOW_HOURS * 3600
     floor = max(since, min_time)
     by_id = {s["id"]: s for s in sources}
     countries_out, buckets_out = {}, {}
@@ -161,7 +165,7 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     since = 0.0
                 payload = status_payload(app)
-                payload["items"] = items_payload(app, since)
+                payload["items"], payload["truncated"] = items_payload(app, since)
                 self._json(payload)
             elif path == "/api/geo":
                 try:

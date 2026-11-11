@@ -31,9 +31,14 @@ def run_migrations(db, lock):
         current = db.execute("PRAGMA user_version").fetchone()[0]
         for version, fn in sorted(MIGRATIONS, key=lambda t: t[0]):
             if version > current:
-                fn(db)
-                db.execute("PRAGMA user_version = %d" % version)  # int only, never user input
-                db.commit()
+                db.execute("BEGIN")
+                try:
+                    fn(db)
+                    db.execute("PRAGMA user_version = %d" % version)  # int only, never user input
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    raise
 
 
 @migration(1)
@@ -41,6 +46,17 @@ def _m1_saved_country_iso(db):
     cols = [r[1] for r in db.execute("PRAGMA table_info(saved)")]
     if "country_iso" not in cols:
         db.execute("ALTER TABLE saved ADD COLUMN country_iso TEXT DEFAULT ''")
+
+
+@migration(2)
+def _m2_sources_snapshot_and_item_lang(db):
+    db.execute("""CREATE TABLE sources (
+        id TEXT PRIMARY KEY, name TEXT, region TEXT, country_iso TEXT, scope TEXT,
+        exile INTEGER DEFAULT 0, covers TEXT, lang TEXT, kind TEXT,
+        state_media INTEGER DEFAULT 0, paywall INTEGER DEFAULT 0,
+        first_seen REAL, last_seen REAL, active INTEGER DEFAULT 1)""")
+    db.execute("ALTER TABLE items ADD COLUMN lang TEXT")
+    db.execute("CREATE INDEX items_source_seen ON items(source_id, first_seen)")
 
 
 def schema_version():
@@ -70,15 +86,21 @@ class Store:
                     last_try REAL, last_ok REAL, count INTEGER DEFAULT 0, etag TEXT, lastmod TEXT);
             """)
             self.db.commit()
-        run_migrations(self.db, self.lock)
+        try:
+            run_migrations(self.db, self.lock)
+        except Exception:
+            self.db.close()
+            raise
 
-    def add_items(self, source_id, items):
+    def add_items(self, source_id, items, lang=None):
         now = time.time()
         rows = [(hashlib.sha1(it["link"].encode("utf-8")).hexdigest()[:16], source_id, it["title"],
-                 it["link"], it.get("summary", ""), it.get("published"), now) for it in items]
+                 it["link"], it.get("summary", ""), it.get("published"), now, lang) for it in items]
         with self.lock:
             before = self.db.total_changes
-            self.db.executemany("INSERT OR IGNORE INTO items VALUES (?,?,?,?,?,?,?)", rows)
+            self.db.executemany(
+                "INSERT OR IGNORE INTO items (id, source_id, title, link, summary, published, first_seen, lang) "
+                "VALUES (?,?,?,?,?,?,?,?)", rows)
             self.db.commit()
             return self.db.total_changes - before
 
@@ -102,16 +124,30 @@ class Store:
         with self.lock:
             return {r["source_id"]: dict(r) for r in self.db.execute("SELECT * FROM feed_state")}
 
-    def items(self, min_first_seen):
+    def items(self, min_first_seen, limit=30000):
+        """Newest first. Returns (rows, truncated)."""
         with self.lock:
-            return [dict(r) for r in self.db.execute(
-                "SELECT * FROM items WHERE first_seen >= ? ORDER BY first_seen DESC LIMIT 30000",
-                (min_first_seen,))]
+            rows = [dict(r) for r in self.db.execute(
+                "SELECT * FROM items WHERE first_seen >= ? ORDER BY first_seen DESC LIMIT ?",
+                (min_first_seen, limit + 1))]
+        return rows[:limit], len(rows) > limit
 
-    def prune(self, cutoff):
+    def sync_sources(self, sources, now=None):
+        """Snapshot source metadata so archived items keep their attribution after a source
+        leaves sources.json, and give a language to items stored before the column existed."""
+        now = time.time() if now is None else now
         with self.lock:
-            self.db.execute("DELETE FROM items WHERE first_seen < ? AND COALESCE(published, first_seen) < ?",
-                            (cutoff, cutoff))
+            self.db.execute("UPDATE sources SET active = 0")
+            for s in sources:
+                self.db.execute("INSERT OR IGNORE INTO sources (id, first_seen) VALUES (?, ?)", (s["id"], now))
+                self.db.execute(
+                    "UPDATE sources SET name=?, region=?, country_iso=?, scope=?, exile=?, covers=?, lang=?, "
+                    "kind=?, state_media=?, paywall=?, last_seen=?, active=1 WHERE id=?",
+                    (s.get("name", s["id"]), s.get("region", "Other"), s.get("country_iso"), s.get("scope"),
+                     1 if s.get("exile") else 0, s.get("covers"), s.get("lang"), s.get("kind") or "news",
+                     1 if s.get("state_media") else 0, 1 if s.get("paywall") else 0, now, s["id"]))
+            self.db.execute("UPDATE items SET lang = (SELECT lang FROM sources WHERE sources.id = items.source_id) "
+                            "WHERE lang IS NULL")
             self.db.commit()
 
     def get_item(self, item_id):

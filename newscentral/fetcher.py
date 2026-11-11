@@ -5,7 +5,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .config import SOURCES_FILE, REFRESH_SECONDS, ERROR_RETRY_SECONDS, WORKERS, KEEP_HOURS
+from .config import SOURCES_FILE, REFRESH_SECONDS, ERROR_RETRY_SECONDS, WORKERS
 from .feeds import configured_feeds, fetch_source
 from .http_client import short_error
 from .sources import load_sources, country_label
@@ -42,12 +42,17 @@ class Fetcher(threading.Thread):
         self.last_cycle = 0.0
         self.sources = []
         self.sources_error = ""
+        self._synced_mtime = None
         self.reload_sources()
 
     def reload_sources(self):
         try:
             self.sources = load_sources()
             self.sources_error = ""
+            mtime = self.sources_mtime()
+            if mtime != self._synced_mtime:      # first load, or sources.json edited
+                self.store.sync_sources(self.sources)
+                self._synced_mtime = mtime
         except Exception as e:
             self.sources_error = "Could not read sources.json: %s" % e
         return self.sources
@@ -106,9 +111,8 @@ class Fetcher(threading.Thread):
                     except Exception as e:
                         result = {"feed": (configured_feeds(s)[:1] or [""])[0], "items": [], "status": "error", "error": short_error(e)}
                     if result["items"]:
-                        new_total += self.store.add_items(s["id"], result["items"])
+                        new_total += self.store.add_items(s["id"], result["items"], s.get("lang"))
                     self.store.set_state(s["id"], result)
-            self.store.prune(time.time() - KEEP_HOURS * 3600)
             self.last_cycle = time.time()
             self.write_status()
             print(time.strftime("%H:%M:%S"), "checked %d sources, %d new items" % (len(todo), new_total),

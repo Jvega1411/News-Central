@@ -49,6 +49,7 @@ class ApiCase(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
         self.store = Store(os.path.join(self.dir, "news.db"))
+        self.store.sync_sources(self.sources)
         self.fetcher = FakeFetcher(list(self.sources))
         self.app = App(self.store, self.fetcher, self.config)
         self.httpd = Server(("127.0.0.1", 0), Handler)
@@ -85,6 +86,8 @@ class ApiCase(unittest.TestCase):
         status, ctype, raw = self._open(req)
         return status, json.loads(raw.decode("utf-8"))
 
-    def add(self, source_id, title, link, summary="", published=None):
+    def add(self, source_id, title, link, summary="", published=None, lang=None):
+        if lang is None:
+            lang = self.fetcher.source_map().get(source_id, {}).get("lang")
         self.store.add_items(source_id, [{"title": title, "link": link, "summary": summary,
-                                          "published": published}])
+                                          "published": published}], lang)

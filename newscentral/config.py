@@ -13,7 +13,8 @@ INDEX_FILE = os.path.join(STATIC_DIR, "index.html")
 
 REFRESH_SECONDS = 900          # background fetch every 15 minutes
 ERROR_RETRY_SECONDS = 3600     # failing sources retried hourly, or on manual refresh
-KEEP_HOURS = 96                # renamed LIVE_WINDOW_HOURS in Task 6
+LIVE_WINDOW_HOURS = 96         # how far back the live feed and the map look; the archive keeps everything
+LIVE_ROW_LIMIT = 30000         # rows per /api/items response; beyond it the response says "truncated"
 FETCH_TIMEOUT = 20
 WORKERS = 16
 MAX_ITEMS_PER_FEED = 60
