@@ -5,5 +5,9 @@
   "read_langs": ["es", "en"],
   "refresh_minutes": 15,
   "keep_awake": false,
-  "log_file": null
+  "log_file": null,
+  "worker": true,
+  "translate_batch": 16,
+  "worker_threads": null,
+  "translate_engine": {"default": "nllb-600m"}
 }

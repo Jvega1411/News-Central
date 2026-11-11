@@ -76,6 +76,46 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(p["db"], os.path.join(self.dir, "news.db"))
         self.assertIsNone(p["log"])
 
+    def test_worker_defaults(self):
+        cfg = config.load_config(self.path)
+        self.assertIs(cfg["worker"], True)
+        self.assertEqual(cfg["translate_batch"], 16)
+        self.assertIsNone(cfg["worker_threads"])
+        self.assertEqual(cfg["translate_engine"], {"default": "nllb-600m"})
+        self.assertEqual(config.TARGET_LANG, "es")
+
+    def test_worker_values_from_file(self):
+        self.write({"worker": False, "translate_batch": 8, "worker_threads": 2,
+                    "translate_engine": {"default": "opus-mt", "zh": "nllb-600m"}})
+        cfg = config.load_config(self.path)
+        self.assertIs(cfg["worker"], False)
+        self.assertEqual(cfg["translate_batch"], 8)
+        self.assertEqual(config.worker_threads(cfg), 2)
+        self.assertEqual(cfg["translate_engine"]["zh"], "nllb-600m")
+
+    def test_worker_override_from_flag(self):
+        cfg = config.load_config(self.path, {"worker": False})
+        self.assertIs(cfg["worker"], False)
+
+    def test_bad_worker_values_name_the_key(self):
+        for bad in ({"worker": "no"}, {"translate_batch": 0}, {"translate_batch": 1000},
+                    {"worker_threads": 0}, {"worker_threads": "2"}, {"translate_engine": "nllb-600m"},
+                    {"translate_engine": {"zh": "opus-mt"}}, {"translate_engine": {"default": ""}},
+                    {"translate_engine": {"default": "nllb-600m", "zh": 3}}):
+            self.write(bad)
+            with self.assertRaises(config.ConfigError) as cm:
+                config.load_config(self.path)
+            self.assertIn(list(bad)[0], str(cm.exception))
+
+    def test_worker_threads_default_is_half_the_cores(self):
+        cores = os.cpu_count() or 2
+        self.assertEqual(config.worker_threads({"worker_threads": None}), max(1, cores // 2))
+
+    def test_paths_for_models_and_bench(self):
+        p = config.paths({"data_dir": self.dir, "log_file": None})
+        self.assertEqual(p["models"], os.path.join(self.dir, "models"))
+        self.assertEqual(p["bench"], os.path.join(self.dir, "bench"))
+
 
 if __name__ == "__main__":
     unittest.main()

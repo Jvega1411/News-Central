@@ -20,6 +20,7 @@ WORKERS = 16
 MAX_ITEMS_PER_FEED = 60
 MAX_BYTES = 12 * 1024 * 1024
 SUMMARY_CHARS = 500
+TARGET_LANG = "es"             # the one language translations are written in
 
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 
@@ -31,6 +32,10 @@ DEFAULTS = {
     "refresh_minutes": 15,
     "keep_awake": False,
     "log_file": None,
+    "worker": True,
+    "translate_batch": 16,
+    "worker_threads": None,
+    "translate_engine": {"default": "nllb-600m"},
 }
 
 
@@ -50,8 +55,15 @@ def _check(key, value):
         ok = isinstance(value, str) and bool(value)
     elif key == "read_langs":
         ok = isinstance(value, list) and bool(value) and all(isinstance(x, str) for x in value)
-    elif key == "keep_awake":
+    elif key in ("keep_awake", "worker"):
         ok = isinstance(value, bool)
+    elif key == "translate_batch":
+        ok = is_int(value) and 1 <= value <= 256
+    elif key == "worker_threads":
+        ok = value is None or (is_int(value) and value >= 1)
+    elif key == "translate_engine":
+        ok = (isinstance(value, dict) and isinstance(value.get("default"), str)
+              and all(isinstance(k, str) and isinstance(v, str) and k and v for k, v in value.items()))
     elif key == "log_file":
         ok = value is None or (isinstance(value, str) and bool(value))
     else:
@@ -81,6 +93,12 @@ def load_config(path=CONFIG_FILE, overrides=None):
     return cfg
 
 
+def worker_threads(cfg):
+    """CPU threads an engine may use. Default: half the cores, at least one, so the reader and
+    the fetcher stay responsive."""
+    return cfg.get("worker_threads") or max(1, (os.cpu_count() or 2) // 2)
+
+
 def paths(cfg):
     def resolve(p):
         return p if os.path.isabs(p) else os.path.join(BASE_DIR, *p.replace("\\", "/").split("/"))
@@ -90,5 +108,7 @@ def paths(cfg):
         "data": data_dir,
         "db": os.path.join(data_dir, "news.db"),
         "status": os.path.join(data_dir, "sources_status.json"),
+        "models": os.path.join(data_dir, "models"),
+        "bench": os.path.join(data_dir, "bench"),
         "log": resolve(cfg["log_file"]) if cfg.get("log_file") else None,
     }
