@@ -44,6 +44,7 @@ onState(function (st) {
   if (st.country !== undefined && st.country !== S.country) { S.country = st.country; changed = true; }
   if (st.scope !== undefined && st.scope !== S.scope) { S.scope = st.scope; changed = true; }
   if (!changed) return;
+  S.src = '';  // a new place selection drops the single-outlet filter
   if (regionChanged) pref.set('region', S.region);
   S.shown = PAGE;
   if (S.view === 'feed' || S.view === 'map') { renderFeed(); window.scrollTo(0, 0); }
@@ -139,7 +140,9 @@ function compute() {
     if (S.country && effectiveIso(src) !== S.country) continue;
     // scope filter: match source scope against selected bucket
     if (S.scope && (src.scope || '') !== S.scope) continue;
-    var inRegion = S.region === 'All' || src.region === S.region;
+    // A country or scope selection already passed its own filter above; the source's
+    // editorial region (e.g. BBC World is "Global") must not exclude it again.
+    var inRegion = !!S.country || !!S.scope || S.region === 'All' || src.region === S.region;
     if (it.fs > S.cutoff) { if (inRegion) pending++; continue; }
     counts[src.region] = (counts[src.region] || 0) + 1;
     total++;
