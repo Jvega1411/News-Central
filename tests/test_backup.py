@@ -168,6 +168,26 @@ class BackupCase(unittest.TestCase):
         finally:
             new.db.close()
 
+    def test_newest_translation_wins_on_restore(self):
+        out = os.path.join(self.dir, "twodays")
+        for day, text in (("2023-11-13", "viejo"), ("2023-11-14", "nuevo")):
+            d = os.path.join(out, "translations", day[:4])
+            os.makedirs(d, exist_ok=True)
+            row = {"item_id": "id1", "field": "title", "lang": "es", "text": text, "engine": "fake",
+                   "created": 1.0}
+            with gzip.open(os.path.join(d, day + ".ndjson.gz"), "wt", encoding="utf-8") as f:
+                f.write(json.dumps(row) + "\n")
+        new_db = os.path.join(self.dir, "restored2", "news.db")
+        restore_backup.restore(out, new_db)
+        new = Store(new_db)
+        try:
+            rows = [tuple(r) for r in new.db.execute("SELECT item_id, text FROM translations")]
+            self.assertEqual(rows, [("id1", "nuevo")])
+            self.assertEqual(new.db.execute(
+                "SELECT count(*) FROM translations_fts WHERE translations_fts MATCH 'viejo'").fetchone()[0], 0)
+        finally:
+            new.db.close()
+
     def test_restore_refuses_existing_target(self):
         self.seed()
         backup.run_backup(self.db_path, self.out, NOW)

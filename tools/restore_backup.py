@@ -21,6 +21,10 @@ def insert_rows(db, table, rows, verb):
         use = [c for c in cols if c in row]
         if not use:
             continue
+        if verb == "REPLACE" and table == "translations":
+            # REPLACE does not fire the delete trigger that keeps translations_fts in step.
+            db.execute("DELETE FROM translations WHERE item_id = ? AND field = ? AND lang = ?",
+                       [row.get("item_id"), row.get("field"), row.get("lang")])
         sql = 'INSERT OR %s INTO "%s" (%s) VALUES (%s)' % (
             verb, table, ",".join('"%s"' % c for c in use), ",".join("?" * len(use)))
         n += max(db.execute(sql, [row[c] for c in use]).rowcount, 0)
@@ -44,7 +48,9 @@ def restore(backup_dir, db_path):
                             continue
                         with gzip.open(os.path.join(ydir, name), "rt", encoding="utf-8") as f:
                             rows = [json.loads(line) for line in f if line.strip()]
-                        total += insert_rows(store.db, table, rows, "IGNORE")
+                        # Day files go in ascending date order, so for translations the newest
+                        # text of an (item, field, lang) wins; items never change, first one stays.
+                        total += insert_rows(store.db, table, rows, "REPLACE" if table == "translations" else "IGNORE")
                 counts[table] = total
             sdir = os.path.join(backup_dir, "state")
             names = sorted(n for n in os.listdir(sdir) if STATE_RE.match(n)) if os.path.isdir(sdir) else []
