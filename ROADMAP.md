@@ -5,9 +5,9 @@ Goal: the best news tool for this specific use (global coverage for CMUDE prep, 
 ## Phase 1: Foundations
 
 - [ ] OPML export of the source list (portability insurance)
-- [ ] Config file: port, listen address, data folder
+- [x] Config file: port, listen address, data folder
 - [x] Numbered schema migrations
-- [ ] Keep the full archive (drop the 96 h prune for items) and add full-text search over history (SQLite FTS5; check it exists in each machine's Python)
+- [x] Keep the full archive (drop the 96 h prune for items) and add full-text search over history (SQLite FTS5; check it exists in each machine's Python)
 - [x] Map of where the press is from: choropleth of item counts by source country, click to filter. Needs ISO country codes in `sources.json` and rules for "Global", "UN", "Pan-African", exile outlets
 - [x] Press-freedom layer on the map (RSF World Press Freedom Index 2026)
 - [ ] Topic filter (moved to spec 2, enrichment). Decided 2026-11-11:
@@ -22,7 +22,7 @@ Goal: the best news tool for this specific use (global coverage for CMUDE prep, 
 
 - [ ] Tags on saved items by motion area and matter-file section; Markdown export per tag into the debate corpus
 - [ ] Claude connector (MCP server) over the HTTP API: search archive, saved items and notes
-- [ ] Fetch-gap counter per source (shows what is lost while the host sleeps; trigger for Phase 4)
+- [x] Fetch-gap counter (per collection run, shown in the Sources view; shows what is lost while the host sleeps; trigger for Phase 4)
 - [ ] Google News `site:` search feeds as fallback for blocked sources (undocumented format; test on a real machine)
 - [ ] Map of where stories happen: gazetteer of country names, demonyms and capitals (en/es/pt/fr); watch false positives (Chad, Jordan, Georgia)
 - [ ] Keyword alerts to the phone (for example ntfy; verify terms first)
@@ -39,6 +39,8 @@ Goal: the best news tool for this specific use (global coverage for CMUDE prep, 
 
 Start when any trigger fires: fetch gaps from the Mac sleeping, the Mac short on resources, need for access away from home, batch jobs slowing the Mac.
 
+Interim host: the Windows MSI laptop, via `tools/windows/install.ps1`.
+
 - [ ] 64-bit Raspberry Pi OS, wired network, SSD instead of SD card
 - [ ] Run as a service that starts on boot and restarts on failure
 - [ ] Move `data/news.db` (single copy), keep a backup on the Mac
@@ -53,3 +55,8 @@ Start when any trigger fires: fetch gaps from the Mac sleeping, the Mac short on
 - Animal Político: the site returned server errors (504) on both checks.
 - Sports & celebrity filter hid 4.7% of items in the first real snapshot (219 of 4,673). Outlets that don't put the section in the URL slip through, so the true share is unknown.
 - Windows: second-copy detection relies on `allow_reuse_address = False` there; not yet tested on Windows.
+- Chinese, Japanese and Korean text is not segmented by the search index; searching those languages matches whole runs only until translated text exists.
+- No database backup yet: the archive is one file on one laptop.
+- Lid-closed temperature on the MSI and collection across unattended Windows Update reboots are unverified.
+- Candidates rejected in batch 1a for lack of a usable feed or because they block automated readers: European Commission press corner, European Court of Auditors, Congreso, Senado, Tribunal Constitucional, IMF news and blog, OECD, World Bank, ILO, UNCTAD, CNMV (empty feeds), Vozpópuli, El Economista México, The Economist, Bloomberg.
+- On the TVITEC network a firewall intercepts TLS to some outlets in Russia, China, South Korea, Iran, Indonesia and Vietnam (9 sources fail with a certificate error there). Check source health from another network before disabling one.

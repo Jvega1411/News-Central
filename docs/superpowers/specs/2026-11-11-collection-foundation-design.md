@@ -1,6 +1,6 @@
 # Collection foundation: design
 
-Date: 2026-11-11. Status: approved in brainstorming, pending written review.
+Date: 2026-11-11. Status: implemented, 2026-11-11.
 
 ## Context
 
@@ -74,8 +74,8 @@ newscentral/
   config.py               defaults, config.json, flag precedence
   text.py                 text normalization, charset decoding
   http_client.py          http_get, curl_get, get_with_fallback
-  feeds.py                parse_feed, discover_feeds, fetch_source
   sources.py              load_sources, validate_sources, countries, languages, press freedom
+  feeds.py                parse_feed, discover_feeds, fetch_source
   store.py                Store, migrations
   fetcher.py              Fetcher thread
   stats.py                gap and volume computations (pure functions)
@@ -137,8 +137,9 @@ their own table in spec 2.
 ### Charset decoding
 
 `text.decode_bytes(data, http_charset=None)` tries, in order: a byte-order
-mark, the XML declaration, the HTTP `Content-Type` charset, UTF-8. `http_get`
-and `curl_get` pass the header charset through.
+mark, the XML declaration, UTF-8, the HTTP `Content-Type` charset. UTF-8 comes
+before the header because some servers announce ISO-8859-1 for feeds that are
+UTF-8. `http_get` and `curl_get` pass the header charset through.
 
 The cp1252 and latin-1 fallback is kept only for sources whose `lang` is
 written in Latin script. For any other source, undecodable bytes make the fetch
@@ -180,10 +181,16 @@ Numbered after the existing migration 1:
 
 2. Create `sources`; add `items.lang`; create index `items(source_id, first_seen)`.
 3. Renormalize `title` and `summary` of existing `items` and `saved` rows with
-   `text.normalize`. Item ids do not change: they derive from the link.
-4. Create the FTS index and its triggers, and populate it (skipped when FTS5 is
-   unavailable).
-5. Create `fetch_runs`.
+   the Unicode steps of `text.normalize` (markup is not stripped again). Item
+   ids do not change: they derive from the link.
+4. Create `fetch_runs`.
+5. Add `items.feed_tags`: the `<category>` / `dc:subject` tags a feed attaches
+   to each item, raw and normalized, as a JSON list. Nothing interprets them
+   in this spec; they are input for the topic classifier in spec 2.
+
+The FTS index is created at startup by `Store.ensure_fts()` when FTS5 is
+available, because it depends on the SQLite build and not on the schema
+version.
 
 Each migration runs inside one transaction, so a failure leaves the previous
 version intact.
@@ -197,7 +204,7 @@ version intact.
   to `LIKE` on title and summary, and reports `"engine": "like"`.
 - `GET /api/search` parameters: `q`, `from`, `to` (UTC epoch seconds),
   `region`, `country` (ISO alpha-2, matched against the effective country:
-  `covers` for exile outlets), `lang`, `kind`, `source`, `limit` (default 50,
+  `covers` for exile outlets), `scope`, `lang`, `kind`, `source`, `limit` (default 50,
   maximum 200), `offset`. At least one of `q`, `from`, `source` is required.
 - Response: `{items, total, engine, limit, offset}`. Each item carries the same
   fields as `/api/items` plus `lang`, source name and country taken from the
