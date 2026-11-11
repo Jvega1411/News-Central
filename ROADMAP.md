@@ -6,10 +6,10 @@ Goal: the best news tool for this specific use (global coverage for CMUDE prep, 
 
 - [ ] OPML export of the source list (portability insurance)
 - [ ] Config file: port, listen address, data folder
-- [ ] Numbered schema migrations
+- [x] Numbered schema migrations
 - [ ] Keep the full archive (drop the 96 h prune for items) and add full-text search over history (SQLite FTS5; check it exists in each machine's Python)
-- [ ] Map of where the press is from: choropleth of item counts by source country, click to filter. Needs ISO country codes in `sources.json` and rules for "Global", "UN", "Pan-African", exile outlets
-- [ ] Press-freedom layer on the map (RSF World Press Freedom Index 2026)
+- [x] Map of where the press is from: choropleth of item counts by source country, click to filter. Needs ISO country codes in `sources.json` and rules for "Global", "UN", "Pan-African", exile outlets
+- [x] Press-freedom layer on the map (RSF World Press Freedom Index 2026)
 - [ ] Topics without new downloads: section names in links plus multilingual keyword rules, mapped to BP motion areas (economy, governance, international relations and security, law and rights, environment and energy, technology, health, education, religion and culture, gender and society, migration, media)
 - [ ] Refresh interval per source (wires 5 min, think tanks 6 h)
 
