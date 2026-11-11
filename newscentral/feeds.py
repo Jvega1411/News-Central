@@ -8,7 +8,7 @@ from html.entities import name2codepoint
 
 from .config import MAX_ITEMS_PER_FEED, SUMMARY_CHARS
 from .http_client import NotModified, get_with_fallback, short_error
-from .text import clean_text, decode_bytes
+from .text import decode_bytes, normalize
 
 
 XML_ENTITIES = {"amp", "lt", "gt", "quot", "apos"}
@@ -122,11 +122,11 @@ def normalize_link(url):
 
 
 def parse_entry(el, base):
-    title = clean_text(child_text(el, "title"), 300)
+    title = normalize(child_text(el, "title"), 300)
     link = entry_link(el, base)
     if not title or not link.startswith(("http://", "https://")):
         return None
-    summary = clean_text(child_text(el, "description", "summary", "encoded", "content"), SUMMARY_CHARS)
+    summary = normalize(child_text(el, "description", "summary", "encoded", "content"), SUMMARY_CHARS)
     if summary == title:
         summary = ""
     published = parse_date(child_text(el, "pubDate", "published", "updated", "date",
@@ -147,7 +147,7 @@ def regex_items(text, base):
             value = mm.group(mm.lastindex)
             return re.sub(r"(?s)^\s*<!\[CDATA\[(.*?)\]\]>\s*$", r"\1", value).strip()
 
-        title = clean_text(grab(r"<title[^>]*>(.*?)</title>"), 300)
+        title = normalize(grab(r"<title[^>]*>(.*?)</title>"), 300)
         link = html.unescape(grab(r"<link[^>]*href=[\"']([^\"']+)[\"']")
                              or grab(r"<link[^>]*>(.*?)</link>")
                              or grab(r"<guid[^>]*>(https?://.*?)</guid>"))
@@ -157,7 +157,7 @@ def regex_items(text, base):
         out.append({
             "title": title,
             "link": normalize_link(link),
-            "summary": clean_text(grab(r"<(description|summary)[^>]*>(.*?)</\1>"), SUMMARY_CHARS),
+            "summary": normalize(grab(r"<(description|summary)[^>]*>(.*?)</\1>"), SUMMARY_CHARS),
             "published": parse_date(grab(r"<(pubDate|published|updated|dc:date)[^>]*>(.*?)</\1>")),
         })
     return out
